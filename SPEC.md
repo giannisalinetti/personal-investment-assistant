@@ -17,6 +17,16 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 
 **LangGraph** orchestrates the Monitor pipeline. Advisor interactions use a separate reasoning path fed by persisted run state — see [Advisor Mode](#advisor-mode-on-demand-reasoning).
 
+### Roadmap
+
+| Phase | Focus | Status |
+|---|---|---|
+| **1** | Monitor pipeline (LangGraph, signals, notifications) | ✅ Complete |
+| **Deployment** | `pia-run` timers, `pia-console`, deploy templates | ✅ Templates ready — install when project is complete |
+| **2** | Advisor mode (CLI, Telegram, reasoning, fresh news, useful links) | ✅ Complete |
+| **3** | Production Advisor (persisted memory, proactive brief, live quotes, `pia-bot` install) | Planned |
+| **4** | Browser web app (dashboard + advisor chat) | Planned |
+
 ---
 
 ## Goals
@@ -44,13 +54,25 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 
 - Provide a simple way to stop the advisor daemon gracefully at any time (`/stop`)
 
+**Phase 3 (planned)**
+
+- Remember conversation context across Advisor restarts
+- Deliver a proactive morning brief after the pre-market Monitor run
+- Fetch live quotes on demand when answering Advisor questions
+- Run `pia-bot` as an installed system service
+
+**Phase 4 (planned)**
+
+- Use Monitor dashboard and Advisor chat in a local web browser (`pia-web`)
+
 ## Non-Goals
 
 - No real-money trading execution (read/analyze only)
 - No portfolio tracking, holdings import, or position sizing — advisory over watchlist only
 - No backtesting engine (v1)
-- No web UI or dashboard (v1)
+- No web UI until **Phase 4** (terminal console and Telegram until then)
 - No external LLM API calls — fully local inference via Ollama
+- No multi-user or cloud-hosted SaaS — single-user, local-first (Phase 4 web app binds to localhost by default)
 
 ---
 
@@ -214,7 +236,8 @@ uv run pia-graph                 # manual Monitor run (development)
 uv run pia-run --run-type manual # scheduled Monitor entry point
 uv run python src/console.py     # console (separate terminal)
 uv run pia-advisor               # interactive advisor CLI (phase 2)
-uv run pia-bot                   # long-running daemon: schedule + Telegram (phase 2)
+uv run pia-bot                   # long-running daemon: Telegram (phase 2)
+uv run pia-web                   # browser UI (phase 4)
 ```
 
 ---
@@ -296,7 +319,9 @@ Personal-Investment-Assistant/
 │   ├── stderr.log                # service stderr (launchd / systemd)
 │   └── scheduler.log             # skipped runs log
 ├── data/
-│   └── state.json                # Monitor output — Advisor + console read this
+│   ├── state.json                # Monitor output — Advisor + console read this
+│   └── advisor/                  # Phase 3 — persisted conversation history
+│       └── history.json
 └── src/
     ├── run_graph.py              # manual CLI — `uv run pia-graph`
     ├── run_once.py               # scheduled CLI — `uv run pia-run`
@@ -317,11 +342,16 @@ Personal-Investment-Assistant/
     │   ├── notifier.py           # dispatch Telegram + email
     │   └── advisor.py            # on-demand reasoning over state.json (phase 2)
     ├── bot/
-    │   └── telegram_handlers.py  # /ask, /brief, /status, /stop (phase 2)
+    │   └── telegram_handlers.py  # /ask, /brief, /status, /stop
+    ├── web/                      # Phase 4 — browser UI (planned)
+    │   ├── app.py                # local HTTP server — `uv run pia-web`
+    │   ├── routes.py
+    │   └── static/               # HTML/CSS/JS or lightweight SPA
     └── tools/
         ├── yfinance_tool.py
         ├── indicators.py
         ├── news_fetcher.py
+        ├── quote_tool.py         # Phase 3 — on-demand live quotes for Advisor
         ├── market_calendar.py    # pandas_market_calendars wrapper
         ├── telegram_client.py
         └── email_client.py
@@ -596,6 +626,16 @@ Prompt structure:
 ### Performance expectations
 
 Advisor calls are **slow by design** (reasoning ON, longer `num_predict`). Typical latency: 30s–3min depending on model and GPU. The user triggers them explicitly and accepts the wait. Monitor runs remain fast (< 2 min target with `reasoning=False` and batched news).
+
+### Phase 2 enhancements (implemented)
+
+The following Advisor capabilities shipped with Phase 2 and are **not** deferred to Phase 3:
+
+- **Fresh headlines** — Google News RSS fetched on demand for tickers mentioned in `/ask` or `/brief` (7-day window)
+- **Useful links** — headline URLs plus Yahoo Finance quote and Google News search links appended to every Advisor reply
+- **Session disclaimer** — financial-advice disclaimer shown once per CLI session or Telegram `/start`, not on every message
+
+Phase 3 adds **persisted** memory, **proactive** brief delivery, **live quotes**, and **production deployment** of the Advisor daemon.
 
 ---
 
@@ -1011,6 +1051,20 @@ EMAIL_ENABLED=false
 LOG_LEVEL=INFO
 LOG_TO_CONSOLE=false
 ADVISOR_STALE_STATE_HOURS=2
+ADVISOR_NEWS_WINDOW_HOURS=168
+ADVISOR_NEWS_HEADLINES_PER_TICKER=8
+
+# Phase 3 — Advisor production
+ADVISOR_HISTORY_MAX_TURNS=20
+ADVISOR_FETCH_QUOTES=true
+PROACTIVE_BRIEF_ENABLED=false
+PROACTIVE_BRIEF_VIA=telegram
+PROACTIVE_BRIEF_SKIP_IF_NOTIFY=false
+
+# Phase 4 — web UI
+PIA_WEB_HOST=127.0.0.1
+PIA_WEB_PORT=8765
+PIA_WEB_TOKEN=
 ```
 
 ---
@@ -1061,6 +1115,176 @@ ADVISOR_STALE_STATE_HOURS=2
 - [ ] `uv run pia-advisor` REPL works without Telegram
 - [ ] Monitor pipeline still uses `get_llm()` (reasoning OFF) after Advisor is added
 
+**Phase 3 — Advisor production & live data**
+
+- [ ] Conversation history survives `pia-advisor` and `pia-bot` restarts
+- [ ] Pre-market run triggers proactive `/brief` when `PROACTIVE_BRIEF_ENABLED=true`
+- [ ] Advisor `/ask` includes live quote snapshot for mentioned tickers (price, change %, as-of)
+- [ ] `pia-bot` installed and running via launchd (macOS) or systemd (Linux)
+- [ ] Proactive brief does not duplicate the standard Monitor notification when both are enabled
+
+**Phase 4 — Web application**
+
+- [ ] `uv run pia-web` serves UI on configured localhost port
+- [ ] Dashboard page mirrors `pia-console` data from `state.json`
+- [ ] Advisor chat page supports `/brief`-equivalent and free-form questions with streaming or progress indicator
+- [ ] Web app reuses `advisor_respond()` — no duplicated LLM logic
+- [ ] Bind to localhost by default; optional auth token if exposed beyond loopback
+
+---
+
+## Phase 3 — Advisor Production & Live Data
+
+Phase 3 turns the Phase 2 Advisor from a dev tool into a **daily driver**: memory that survives restarts, automatic morning briefs, fresher market data, and a properly installed daemon.
+
+### 1. Persisted conversation memory
+
+**Problem:** Phase 2 keeps history in memory only (`bot_data` / CLI session). Restarting `pia-bot` or `pia-advisor` loses context.
+
+**Design:**
+
+- Store history in `data/advisor/history.json` (atomic write, same pattern as `state.json`)
+- Schema:
+
+```json
+{
+  "updated_at": "2026-06-03T08:15:00+00:00",
+  "telegram_chat_id": "123456789",
+  "turns": [
+    {"role": "user", "content": "Why did IBM rise?"},
+    {"role": "assistant", "content": "…"}
+  ]
+}
+```
+
+- Cap at `ADVISOR_HISTORY_MAX_TURNS` (default 20 turns = 10 exchanges)
+- Shared loader used by `pia-advisor` and `pia-bot` (`src/advisor_history.py`)
+- `/clear` command (Telegram + CLI) resets history
+
+### 2. Proactive `/brief` after pre-market run
+
+**Problem:** User must manually run `/brief` each morning.
+
+**Design:**
+
+- After successful `pia-run --run-type pre_market`, optionally generate and send a daily brief
+- Controlled by `.env`:
+
+```bash
+PROACTIVE_BRIEF_ENABLED=true
+PROACTIVE_BRIEF_VIA=telegram   # telegram | email | both
+```
+
+- Flow: `run_once.py` → Monitor graph → persist `state.json` → if enabled, call `advisor_respond(mode="brief")` → dispatch via Telegram/email
+- Send **only** when Telegram/email is configured and Monitor run was not skipped
+- If Monitor notification already sent, proactive brief is a **separate message** (brief is narrative; Monitor alert is signal-focused). Set `PROACTIVE_BRIEF_SKIP_IF_NOTIFY=false` to always send both.
+
+### 3. On-demand quote fetch
+
+**Problem:** Advisor reasons over stale Monitor OHLCV; intraday `/ask` questions need current price.
+
+**Design:**
+
+- Add `src/tools/quote_tool.py` — lightweight yfinance fetch (latest price, day change %, volume, as-of timestamp)
+- Advisor calls `fetch_quotes(tickers)` for mentioned watchlist symbols before building the prompt
+- Inject a **Live quotes** block alongside existing **Fresh headlines** and **Useful links**
+- Quotes are **facts from yfinance** — LLM must not invent prices when this block is present
+- Config: `ADVISOR_FETCH_QUOTES=true` (default true in Phase 3)
+
+### 4. Install `pia-bot` service (Advisor daemon)
+
+**Problem:** Phase 2 provides templates only; Advisor must run persistently for Telegram.
+
+**Design:**
+
+- **macOS:** install `deploy/launchd/com.personalinvestmentassistant.bot.plist` to `~/Library/LaunchAgents/`, replace `/ABS/PATH/…`, then:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalinvestmentassistant.bot.plist
+```
+
+- **Linux:** install `deploy/systemd/pia-bot.service` to `~/.config/systemd/user/`, then:
+
+```bash
+systemctl --user enable --now pia-bot.service
+```
+
+- Logs: `logs/bot-stdout.log`, `logs/bot-stderr.log`
+- Install **after** Phase 3 features are validated locally via `uv run pia-bot`
+- Monitor scheduled runs remain separate (`pia-run` timers) — `pia-bot` does not replace them
+
+### Phase 3 build steps
+
+24. `src/advisor_history.py` — load/save/clear persisted turns
+25. Wire history into `run_advisor.py` and `bot/telegram_handlers.py`; add `/clear`
+26. `src/tools/quote_tool.py` — on-demand quote fetch; wire into `advisor.py`
+27. Proactive brief hook in `run_once.py` + config flags
+28. Install and document `pia-bot` launchd/systemd service (final deploy step for Advisor)
+29. Manual smoke tests — Phase 3 checklist
+
+---
+
+## Phase 4 — Web Application (Browser UI)
+
+Phase 4 adds a **local web front-end** so Monitor state and Advisor chat are usable in a browser — same machine as Ollama, no cloud dependency.
+
+### Goals
+
+- View last Monitor run (signals, suggestions, watchlist note) in a browser dashboard
+- Chat with the Advisor (brief + free-form questions) without Telegram or terminal REPL
+- Reuse all existing Python logic — the web layer is a thin HTTP API over `state.json`, `advisor_respond()`, and `load_watchlist()`
+
+### Non-goals (Phase 4)
+
+- No public internet exposure by default
+- No user accounts or multi-tenancy
+- No portfolio import or trade execution
+- No replacement of Ollama — browser talks to local API only
+
+### Architecture
+
+```
+Browser  ←HTTP→  pia-web (FastAPI or Starlette)
+                    ├── GET  /api/state        → load_state()
+                    ├── POST /api/advisor/ask  → advisor_respond()
+                    ├── POST /api/advisor/brief
+                    └── GET  /                 → static SPA or server-rendered pages
+```
+
+- **Default bind:** `127.0.0.1:8765` (`PIA_WEB_HOST`, `PIA_WEB_PORT` in `.env`)
+- **Auth (optional):** `PIA_WEB_TOKEN` header check when not localhost-only
+- **Long requests:** return 202 + poll, or SSE stream for Advisor progress ("Fetching headlines…", "Thinking…")
+- **CORS:** disabled except same-origin
+
+### UI pages (minimum viable)
+
+| Page | Content |
+|---|---|
+| **Dashboard** | Equivalent to `pia-console` — signals table, suggestions, watchlist note, stale banner |
+| **Advisor** | Chat thread with brief button, message input, useful links rendered as clickable anchors |
+| **About** | Model name, last run time, disclaimer (once per session in UI) |
+
+### Tech choices
+
+- **Backend:** FastAPI + uvicorn (add to `pyproject.toml`)
+- **Frontend:** lightweight — server-rendered Jinja2 + HTMX, or small static SPA (no heavy build chain required for v1)
+- **Entry point:** `uv run pia-web` → `src/web/app.py`
+
+### Deployment
+
+- Run manually during development
+- Optional: launchd/systemd user service `pia-web.service` (separate from `pia-bot` and `pia-run`)
+- Can run alongside `pia-bot` — web Advisor and Telegram Advisor share `advisor_history.json` if same session id is used (future refinement)
+
+### Phase 4 build steps
+
+30. `src/web/app.py` + routes — state and advisor API
+31. Dashboard page (read `state.json`)
+32. Advisor chat page (POST ask/brief, display useful links)
+33. `pia-web` entry in `pyproject.toml`; config vars in `.env.example`
+34. Optional `deploy/` service unit for `pia-web`
+35. Manual smoke tests — Phase 4 checklist
+
 ---
 
 ## Coding Conventions
@@ -1097,27 +1321,39 @@ ADVISOR_STALE_STATE_HOURS=2
 12. `run_graph.py` + `run_once.py` + `state_persistence.py`
 13. Manual smoke tests — Monitor checklist
 
-**Deployment — timer-only Monitor runs**
+**Deployment — timer-only Monitor runs** ✅ (templates ready; install when project is complete)
 
 14. `deploy/launchd/` — macOS calendar plists for three daily runs
 15. `deploy/systemd/` — Linux user timers + oneshot service units
 16. `src/console.py` — rich terminal dashboard
 
-**Phase 2 — Advisor mode (decision support)**
+**Phase 2 — Advisor mode (decision support)** ✅
 
 17. `llm.py` — add `get_advisor_llm()` with `reasoning=True`
-18. `nodes/advisor.py` — `/brief` and `/ask` prompt templates over `state.json`
+18. `nodes/advisor.py` — `/brief` and `/ask` over `state.json` (+ fresh RSS, useful links)
 19. `run_advisor.py` — interactive CLI REPL (`pia-advisor`)
 20. `bot/telegram_handlers.py` — `/brief`, `/ask`, `/status`, `/stop`
-21. `main.py` — long-running daemon (`pia-bot`) with Telegram polling + optional scheduler
-22. launchd agent or `systemd` user service for persistent bot process
+21. `main.py` — long-running daemon (`pia-bot`) with Telegram polling
+22. Deploy templates for `pia-bot` (launchd + systemd) — install deferred to Phase 3
 23. Manual smoke tests — Advisor checklist
 
-**Phase 3 — optional enhancements**
+**Phase 3 — Advisor production & live data**
 
-24. Multi-turn session memory persisted across `/ask` messages
-25. Proactive `/brief` push after pre-market run (Telegram notification with brief attached)
-26. Optional fresh-data tools in Advisor (on-demand quote fetch for `/ask`)
+24. `advisor_history.py` — persisted conversation across restarts
+25. `/clear` command; wire history into CLI and Telegram
+26. `quote_tool.py` — on-demand live quotes in Advisor prompts
+27. Proactive `/brief` after pre-market run (`PROACTIVE_BRIEF_ENABLED`)
+28. **Install** `pia-bot` launchd/systemd service (production Advisor daemon)
+29. Manual smoke tests — Phase 3 checklist
+
+**Phase 4 — Web application (browser UI)**
+
+30. `src/web/` — FastAPI app + static UI (`pia-web`)
+31. Dashboard page (Monitor state from `state.json`)
+32. Advisor chat page (brief + ask, useful links)
+33. Localhost binding, optional auth token, config in `.env`
+34. Optional `pia-web` deploy service unit
+35. Manual smoke tests — Phase 4 checklist
 
 ---
 
