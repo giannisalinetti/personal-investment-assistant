@@ -24,7 +24,7 @@ src="$ROOT/deploy/systemd/$unit"
 dest="$HOME/.config/systemd/user/$unit"
 
 mkdir -p "$HOME/.config/systemd/user"
-sed -e "s|/ABS/PATH/TO/Personal-Investment-Assistant|$ROOT|g" "$src" >"$dest"
+sed -e "s|/ABS/PATH/TO/personal-investment-assistant|$ROOT|g" "$src" >"$dest"
 
 echo "Installed $dest"
 echo ""

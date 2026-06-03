@@ -8,13 +8,13 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-run</string>
+        <string>/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-run</string>
         <string>--run-type</string>
         <string>midday</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -25,10 +25,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/stdout.log</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant/logs/stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/stderr.log</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant/logs/stderr.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

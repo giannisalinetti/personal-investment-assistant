@@ -301,7 +301,7 @@ OLLAMA_MODEL=qwen3:8b     # default — fast Monitor runs, capable Advisor with 
 ## Project Structure
 
 ```
-Personal-Investment-Assistant/
+personal-investment-assistant/
 ├── pyproject.toml                # uv-managed dependencies
 ├── .env                          # secrets — never commit
 ├── .env.example                  # safe template to commit
@@ -406,13 +406,13 @@ Use a **launchd user agent** with calendar intervals — one plist per scheduled
 
     <key>ProgramArguments</key>
     <array>
-        <string>/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-run</string>
+        <string>/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-run</string>
         <string>--run-type</string>
         <string>pre_market</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -423,10 +423,10 @@ Use a **launchd user agent** with calendar intervals — one plist per scheduled
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/stdout.log</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant/logs/stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/stderr.log</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant/logs/stderr.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -474,12 +474,12 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/ABS/PATH/TO/Personal-Investment-Assistant
-EnvironmentFile=/ABS/PATH/TO/Personal-Investment-Assistant/.env
+WorkingDirectory=/ABS/PATH/TO/personal-investment-assistant
+EnvironmentFile=/ABS/PATH/TO/personal-investment-assistant/.env
 Environment=TZ=Europe/Rome
-ExecStart=/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-run --run-type %i
-StandardOutput=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/stdout.log
-StandardError=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/stderr.log
+ExecStart=/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-run --run-type %i
+StandardOutput=append:/ABS/PATH/TO/personal-investment-assistant/logs/stdout.log
+StandardError=append:/ABS/PATH/TO/personal-investment-assistant/logs/stderr.log
 ```
 
 Each timer triggers the service instance, e.g. `pia-run@pre_market.service`.

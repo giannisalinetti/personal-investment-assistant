@@ -4,13 +4,13 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/ABS/PATH/TO/Personal-Investment-Assistant
-EnvironmentFile=/ABS/PATH/TO/Personal-Investment-Assistant/.env
+WorkingDirectory=/ABS/PATH/TO/personal-investment-assistant
+EnvironmentFile=/ABS/PATH/TO/personal-investment-assistant/.env
 Environment=TZ=Europe/Rome
-ExecStart=/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-bot
+ExecStart=/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-bot
 Restart=on-failure
-StandardOutput=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/bot-stdout.log
-StandardError=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/bot-stderr.log
+StandardOutput=append:/ABS/PATH/TO/personal-investment-assistant/logs/bot-stdout.log
+StandardError=append:/ABS/PATH/TO/personal-investment-assistant/logs/bot-stderr.log
 
 [Install]
 WantedBy=default.target

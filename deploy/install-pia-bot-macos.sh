@@ -26,7 +26,7 @@ src="$ROOT/deploy/launchd/${label}.plist"
 dest="$HOME/Library/LaunchAgents/${label}.plist"
 
 mkdir -p "$HOME/Library/LaunchAgents"
-sed -e "s|/ABS/PATH/TO/Personal-Investment-Assistant|$ROOT|g" "$src" >"$dest"
+sed -e "s|/ABS/PATH/TO/personal-investment-assistant|$ROOT|g" "$src" >"$dest"
 
 print "Installed $dest"
 print ""

@@ -8,11 +8,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-bot</string>
+        <string>/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-bot</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -21,10 +21,10 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/bot-stdout.log</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant/logs/bot-stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/bot-stderr.log</string>
+    <string>/ABS/PATH/TO/personal-investment-assistant/logs/bot-stderr.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
