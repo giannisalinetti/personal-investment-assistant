@@ -62,14 +62,6 @@ def _print_results(final_state: dict) -> int:
 
     console.print(table)
 
-    suggestions = final_state.get("suggestions", [])
-    if suggestions:
-        console.print("\n[bold]Discovery suggestions[/bold]")
-        for item in suggestions:
-            console.print(
-                f"  • {item['ticker']} ({item['confidence']}) — {item.get('reason', item.get('name', ''))}"
-            )
-
     watchlist_note = final_state.get("watchlist_note")
     if watchlist_note:
         console.print(f"\n[bold]Watchlist note[/bold]: {watchlist_note}")

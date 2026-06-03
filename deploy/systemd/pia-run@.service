@@ -1,0 +1,12 @@
+[Unit]
+Description=Personal Investment Assistant — Monitor pipeline run (%i)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/ABS/PATH/TO/Personal-Investment-Assistant
+EnvironmentFile=/ABS/PATH/TO/Personal-Investment-Assistant/.env
+Environment=TZ=Europe/Rome
+ExecStart=/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-run --run-type %i
+StandardOutput=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/stdout.log
+StandardError=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/stderr.log

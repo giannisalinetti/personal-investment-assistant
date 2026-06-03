@@ -14,6 +14,17 @@ logger = logging.getLogger(__name__)
 DISCLAIMER = "⚠️ Not financial advice. Always do your own research."
 
 
+def format_suggestion_line(item: dict) -> str:
+    """Format a discovery suggestion with ticker, full name, and reason."""
+    ticker = item["ticker"]
+    name = str(item.get("name", "")).strip()
+    reason = str(item.get("reason", "")).strip()
+    label = f"{ticker} — {name}" if name and name.upper() != ticker else ticker
+    if reason:
+        return f"  {label} — {reason}"
+    return f"  {label}"
+
+
 def _is_notifiable_signal(signal: dict) -> bool:
     if signal["signal"] in {"BUY", "SELL"}:
         return signal["confidence"] != "LOW" or not settings.SKIP_LOW_CONFIDENCE
@@ -64,7 +75,7 @@ def format_notification(state: AgentState) -> str:
     if suggestions:
         lines.append("\n💡 Related instruments to watch:")
         for item in suggestions:
-            lines.append(f"  {item['ticker']} — {item.get('reason', item.get('name', ''))}")
+            lines.append(format_suggestion_line(item))
 
     lines.append(f"\n{DISCLAIMER}")
     return "\n".join(lines)

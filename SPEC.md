@@ -2,15 +2,26 @@
 
 ## Overview
 
-An autonomous **advisory-only** multi-agent application built with **LangGraph** that monitors a user-defined watchlist of stocks and ETFs, performs technical and news-driven analysis, and delivers suggestions via **Telegram** and **Email**.
+An autonomous **advisory-only** personal assistant built with **LangGraph** that monitors a user-defined watchlist of stocks and ETFs, performs technical and news-driven analysis, and helps the user **make informed decisions** — not just receive ticker alerts.
 
-The agent has **no access to the user's portfolio** — no holdings, balances, cost basis, or broker integration. It reasons only over the watchlist in `watchlist.yaml` and public market data. All output is informational; the user decides whether to act.
+The agent has **no access to the user's portfolio** — no holdings, balances, cost basis, or broker integration. It reasons only over the watchlist in `watchlist.yaml` and public market data. All output is advisory; the user decides whether to act.
 
-**LangGraph** is the orchestration layer by design: this project doubles as a practical way to learn graph-based agent workflows (parallel nodes, shared state, conditional edges) on a real scheduled pipeline.
+**Two operating modes:**
+
+| Mode | Trigger | LLM reasoning | Purpose |
+|---|---|---|---|
+| **Monitor** | Scheduled runs (08:00 / 13:00 / 17:30) + manual `pia-graph` | Off — fast structured calls | Detect changes, score news, emit alerts |
+| **Advisor** | On demand — Telegram `/ask`, `/brief`, or CLI | On — deliberate multi-step analysis | Help interpret signals, resolve conflicts, explore scenarios |
+
+Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **deliberates** ("technical says BUY but news is negative — here's how to think about it"). Both modes share the same data foundation (`data/state.json`, watchlist, market snapshots).
+
+**LangGraph** orchestrates the Monitor pipeline. Advisor interactions use a separate reasoning path fed by persisted run state — see [Advisor Mode](#advisor-mode-on-demand-reasoning).
 
 ---
 
 ## Goals
+
+**Monitor mode (scheduled pipeline)**
 
 - Monitor a user-defined watchlist of stocks and ETFs
 - Suggest additional correlated instruments not in the watchlist
@@ -20,7 +31,18 @@ The agent has **no access to the user's portfolio** — no holdings, balances, c
 - Deliver notifications via Telegram bot and/or email
 - Run autonomously on a schedule without manual intervention
 - Provide a live terminal console for local monitoring
-- Provide a simple way to stop the service gracefully at any time
+
+**Advisor mode (on demand)**
+
+- Explain macro context **for the user's watchlist** — not generic market commentary
+- Resolve conflicts between technical signals and news sentiment
+- Run scenario analysis ("what if rates stay high for 6 months?") with assumptions stated explicitly
+- Answer follow-up questions in natural language via Telegram or CLI
+- Produce a daily **`/brief`** — macro picture, top conflicts, and what to watch today
+
+**Operational**
+
+- Provide a simple way to stop the advisor daemon gracefully at any time (`/stop`)
 
 ## Non-Goals
 
@@ -34,10 +56,40 @@ The agent has **no access to the user's portfolio** — no holdings, balances, c
 
 ## Architecture
 
-### Agent Graph (LangGraph)
+### Two modes, one assistant
 
 ```
-[Scheduler / Entry Point]
+┌─────────────────────────────────────────────────────────────────┐
+│  MONITOR MODE — scheduled / pia-graph / pia-run                 │
+│  reasoning OFF · fast · 3 LLM calls per run                     │
+├─────────────────────────────────────────────────────────────────┤
+│  Supervisor → [Market Data | News | Discovery] → Analyst → Notify │
+│                              │                                   │
+│                              ▼                                   │
+│                     data/state.json (atomic write)               │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  ADVISOR MODE — on demand · main.py daemon or CLI               │
+│  reasoning ON · slower · user-triggered only                      │
+├─────────────────────────────────────────────────────────────────┤
+│  Load state.json + watchlist + user question                    │
+│       → Advisor node (LLM with reasoning=True)                  │
+│       → Telegram reply / CLI output                             │
+│  Commands: /brief  /ask  /status  /stop                         │
+└─────────────────────────────────────────────────────────────────┘
+
+[Console — src/console.py]
+(separate process, reads state.json, read-only)
+```
+
+Monitor mode runs unattended on a schedule. Advisor mode runs only when the user asks — it reads the latest persisted run as context and uses **reasoning** to produce deliberative, decision-oriented output.
+
+### Monitor pipeline (LangGraph)
+
+```
+[Scheduler / Entry Point — pia-run | pia-graph]
          │
          ▼
 [Supervisor Node]
@@ -49,14 +101,14 @@ The agent has **no access to the user's portfolio** — no holdings, balances, c
                            │
                            ▼
                [Analyst Node]
-               (rule-based signals + LLM rationale + watchlist note)
+               (rule-based signals + LLM rationale polish + watchlist note)
                            │
                            ▼
                [Notifier Node]
                (Telegram + Email dispatch)
-
-[Console — src/console.py]
-(separate process, reads shared state.json, read-only)
+                           │
+                           ▼
+               [state.json — atomic persist]
 ```
 
 ### Supervisor Node
@@ -73,16 +125,32 @@ No LLM calls in the Supervisor — orchestration and gating only.
 
 ### LLM vs rules
 
+**Monitor mode — reasoning OFF**
+
 | Responsibility | Implementation |
 |---|---|
 | RSI, MACD, EMA, Bollinger signals | Rule-based (`indicators.py`) |
 | Signal strength and BUY/SELL/HOLD/WATCH | Rule-based (`analyst.py`) |
-| News sentiment (-1.0 to +1.0) | LLM (`news_analyst.py`) |
-| Correlated instrument suggestions | LLM (`discovery.py`), validated against yfinance |
-| Human-readable rationale in notifications | LLM (`analyst.py`) |
-| Watchlist comparison note (YTD relative performance) | Computed from market data; LLM may polish wording |
+| News sentiment (-1.0 to +1.0) | LLM, one batched call (`news_analyst.py`) |
+| Correlated instrument suggestions | LLM, one call (`discovery.py`), validated against yfinance |
+| Human-readable rationale in notifications | LLM polish, notifiable signals only (`analyst.py`) |
+| Watchlist comparison note (YTD) | Computed from market data; LLM may rephrase |
 
-Keep deterministic logic in code; use the LLM for language and unstructured reasoning only.
+Keep deterministic logic in code. In Monitor mode the LLM handles **classification and language only** — no chain-of-thought reasoning.
+
+**Advisor mode — reasoning ON**
+
+| Responsibility | Implementation |
+|---|---|
+| Macro picture for watchlist | LLM with reasoning (`advisor.py`) |
+| Technical vs news conflict resolution | LLM with reasoning |
+| Scenario / what-if analysis | LLM with reasoning |
+| Free-form follow-up questions | LLM with reasoning + conversation context |
+| Daily brief (`/brief`) | LLM with reasoning over latest `state.json` |
+
+Advisor output is **deliberative narrative** — trade-offs, assumptions, and context — not a buy/sell order. Facts (signals, scores, prices) come from Monitor state; the LLM interprets them.
+
+**What stays rule-based in both modes:** signal assignment, notification gating, ticker validation, market calendar skips, watchlist edits.
 
 ### State Schema
 
@@ -117,8 +185,8 @@ class AgentState(TypedDict):
 | News / sentiment | `feedparser` + RSS | Configurable feeds; watchlist Google News added at runtime |
 | Telegram | `python-telegram-bot` | Async bot API v21+ |
 | Email | `smtplib` + `email` stdlib | Gmail SMTP or SendGrid |
-| Scheduling (v1 deploy) | launchd (macOS) / systemd timers (Linux) | One-shot scheduled runs — see Service Lifecycle |
-| Scheduling (optional) | `APScheduler` in `main.py` | Long-running daemon + Telegram `/stop` `/status` — phase 2 |
+| Scheduling (v1 deploy) | launchd (macOS) / systemd timers (Linux) | One-shot Monitor runs — see Service Lifecycle |
+| Scheduling + Advisor | `APScheduler` in `main.py` | Long-running daemon: scheduled runs + Telegram advisor commands |
 | Terminal console | `rich` | Live dashboard, read-only, separate process |
 | Config | `pydantic-settings` + `.env` | Typed configuration |
 | Package manager | `uv` | Isolated `.venv` per project, Python 3.12+ |
@@ -142,16 +210,20 @@ uv init personal-investment-assistant && cd personal-investment-assistant
 uv add langgraph langchain-core langchain-ollama yfinance pandas-ta \
        pandas-market-calendars feedparser python-telegram-bot \
        apscheduler pydantic-settings pyyaml rich httpx
-uv run pia-graph                 # manual graph run (development)
-uv run pia-run --run-type manual # scheduled entry point (to be implemented)
+uv run pia-graph                 # manual Monitor run (development)
+uv run pia-run --run-type manual # scheduled Monitor entry point
 uv run python src/console.py     # console (separate terminal)
+uv run pia-advisor               # interactive advisor CLI (phase 2)
+uv run pia-bot                   # long-running daemon: schedule + Telegram (phase 2)
 ```
 
 ---
 
 ## LLM — Interchangeable Model
 
-The model is configured via `.env` and never hardcoded. All nodes use `get_llm()` from `src/llm.py` — the only place where `ChatOllama` is instantiated.
+The model is configured via `.env` and never hardcoded. All LLM access goes through `src/llm.py` — the **only** place where `ChatOllama` is instantiated.
+
+Two factory functions separate Monitor speed from Advisor depth:
 
 ```python
 # src/llm.py
@@ -159,23 +231,45 @@ from langchain_ollama import ChatOllama
 from src.config import settings
 
 def get_llm(temperature: float = 0.1) -> ChatOllama:
+    """Monitor pipeline — reasoning OFF, small context, short output."""
     return ChatOllama(
         model=settings.OLLAMA_MODEL,
         base_url=settings.OLLAMA_BASE_URL,
         temperature=temperature,
+        reasoning=False,
+        num_ctx=settings.OLLAMA_NUM_CTX,
+        num_predict=settings.OLLAMA_NUM_PREDICT,
+    )
+
+def get_advisor_llm(temperature: float = 0.3) -> ChatOllama:
+    """Advisor mode — reasoning ON, larger context for deliberation."""
+    return ChatOllama(
+        model=settings.OLLAMA_MODEL,
+        base_url=settings.OLLAMA_BASE_URL,
+        temperature=temperature,
+        reasoning=True,
+        num_ctx=settings.OLLAMA_ADVISOR_NUM_CTX,
+        num_predict=settings.OLLAMA_ADVISOR_NUM_PREDICT,
     )
 ```
+
+| Setting | Monitor default | Advisor default | Purpose |
+|---|---|---|---|
+| `reasoning` | `False` | `True` | Chain-of-thought for on-demand analysis only |
+| `num_ctx` | `8192` | `16384` | KV cache size — keep Monitor small for speed |
+| `num_predict` | `512` | `4096` | Monitor returns JSON; Advisor returns prose |
 
 To swap models, edit `.env` only — no code changes:
 
 ```bash
-OLLAMA_MODEL=qwen3:8b     # default — fast, low VRAM
-# OLLAMA_MODEL=qwen3:14b  # better quality, ~10GB VRAM
-# OLLAMA_MODEL=qwen3:32b  # best quality, ~22GB VRAM, overnight only
+OLLAMA_MODEL=qwen3:8b     # default — fast Monitor runs, capable Advisor with reasoning
+# OLLAMA_MODEL=qwen3:14b  # better Advisor quality, ~10GB VRAM
+# OLLAMA_MODEL=qwen3:32b  # best Advisor quality, ~22GB VRAM
 # OLLAMA_MODEL=qwen2.5:7b # stable fallback if Qwen3 issues
 ```
 
-**Never instantiate `ChatOllama` outside `src/llm.py`.**
+**Never instantiate `ChatOllama` outside `src/llm.py`.**  
+**Never enable reasoning in Monitor pipeline nodes** (`news_analyst`, `discovery`, `analyst`).
 
 ---
 
@@ -202,23 +296,28 @@ Personal-Investment-Assistant/
 │   ├── stderr.log                # service stderr (launchd / systemd)
 │   └── scheduler.log             # skipped runs log
 ├── data/
-│   └── state.json                # shared state written after each run (console reads this)
+│   └── state.json                # Monitor output — Advisor + console read this
 └── src/
     ├── run_graph.py              # manual CLI — `uv run pia-graph`
-    ├── run_once.py               # scheduled CLI — `uv run pia-run` (to be implemented)
-    ├── main.py                   # optional long-running daemon + Telegram commands (phase 2)
+    ├── run_once.py               # scheduled CLI — `uv run pia-run`
+    ├── run_advisor.py            # interactive advisor CLI (phase 2) — `uv run pia-advisor`
+    ├── main.py                   # long-running daemon: schedule + Telegram (phase 2)
     ├── console.py                # rich terminal dashboard (separate process, read-only)
-    ├── graph.py                  # LangGraph graph definition
+    ├── graph.py                  # LangGraph Monitor pipeline definition
     ├── state.py                  # AgentState TypedDict
+    ├── state_persistence.py      # atomic state.json writer
     ├── config.py                 # pydantic-settings config
-    ├── llm.py                    # get_llm() factory
+    ├── llm.py                    # get_llm() + get_advisor_llm() factories
     ├── nodes/
     │   ├── market_data.py        # fetch prices + compute indicators
-    │   ├── news_analyst.py       # fetch + score news
+    │   ├── news_analyst.py       # fetch + score news (batched, no reasoning)
     │   ├── supervisor.py         # graph entry: calendar gate + parallel fan-out
-    │   ├── discovery.py          # suggest correlated instruments (LLM + validation)
-    │   ├── analyst.py            # rule-based signals + LLM rationale + watchlist note
-    │   └── notifier.py           # dispatch Telegram + email
+    │   ├── discovery.py          # suggest correlated instruments (no reasoning)
+    │   ├── analyst.py            # rule-based signals + rationale polish (no reasoning)
+    │   ├── notifier.py           # dispatch Telegram + email
+    │   └── advisor.py            # on-demand reasoning over state.json (phase 2)
+    ├── bot/
+    │   └── telegram_handlers.py  # /ask, /brief, /status, /stop (phase 2)
     └── tools/
         ├── yfinance_tool.py
         ├── indicators.py
@@ -243,7 +342,7 @@ Personal-Investment-Assistant/
 - **Skip logging:** market-closed skips → `logs/scheduler.log`
 - **Application logs:** `logs/app.log` (see `logging_config.py`)
 
-### One-shot entry point (`pia-run`) — to be implemented
+### One-shot entry point (`pia-run`)
 
 ```bash
 uv run pia-run --run-type pre_market
@@ -251,9 +350,9 @@ uv run pia-run --run-type midday
 uv run pia-run --run-type end_of_day
 ```
 
-Wraps `graph.ainvoke()` with the correct `run_type`, persists final state to `data/state.json`, and exits with a non-zero code only on fatal failure.
+Wraps Monitor `graph.ainvoke()` with the correct `run_type`, persists final state to `data/state.json`, and exits with a non-zero code only on fatal failure.
 
-Manual development uses `uv run pia-graph` (same pipeline, interactive Rich output).
+Manual development uses `uv run pia-graph` (same Monitor pipeline, interactive Rich output).
 
 ---
 
@@ -387,29 +486,133 @@ systemctl --user disable --now pia-pre-market.timer pia-midday.timer pia-end-of-
 
 ---
 
-### Phase 2 — optional long-running daemon (`main.py`)
+### Phase 2 — Advisor daemon (`main.py` / `pia-bot`)
 
-Telegram `/stop` and `/status` require a **persistent process** with `APScheduler` and bot polling:
+The decision-assistant features require a **persistent process** with Telegram polling and optional in-process scheduling:
 
 | Platform | Mechanism |
 |---|---|
 | macOS | launchd user agent with `KeepAlive: false`, started manually or at login |
 | Linux | `systemd` user service (`pia-bot.service`), not a timer |
 
-Timer-only deployment (v1) does **not** include `/stop` or `/status` — stop scheduled runs via `launchctl bootout` or `systemctl --user disable` instead.
+Timer-only deployment (phase 1 deploy) runs **Monitor mode only** — no `/ask`, `/brief`, or `/stop`. Stop scheduled runs via `launchctl bootout` or `systemctl --user disable`. Start the advisor daemon separately when you want interactive decision support.
+
+The daemon can either:
+- **Trigger Monitor runs** via `APScheduler` (replaces external timers), or
+- **Coexist** with launchd/systemd timers — Advisor reads `state.json` written by `pia-run`
+
+See [Advisor Mode](#advisor-mode-on-demand-reasoning) and [Telegram Bot Commands](#telegram-bot-commands).
+
+---
+
+## Advisor Mode (On-Demand Reasoning)
+
+Advisor mode is the **decision-support layer**. It does not replace Monitor runs — it **interprets** their output when the user asks.
+
+### Inputs
+
+| Source | Used for |
+|---|---|
+| `data/state.json` | Latest signals, news scores, suggestions, watchlist note, errors |
+| `watchlist.yaml` | Ticker names, alert thresholds, user's monitored universe |
+| User message | Question, scenario, or `/brief` trigger |
+| Optional conversation history | Multi-turn `/ask` follow-ups (in-memory per session, phase 2) |
+
+If `state.json` is missing or stale (> 2 hours), Advisor warns the user and suggests running `pia-graph` or waiting for the next scheduled run.
+
+### Use cases
+
+**1. Macro picture (`/brief`)**
+
+After a Monitor run, produce a watchlist-specific narrative:
+
+- What macro themes matter **for your tickers** this week (rates, sector rotation, geopolitics)
+- Top 2–3 conflicts or alignments across the watchlist
+- What to watch before the next run — not generic market news
+
+**2. Conflict resolution (`/ask`)**
+
+When technical signals and news disagree:
+
+```
+User: AAPL is BUY on RSI but news sentiment is -0.6. How should I read that?
+Advisor: [reasoning] → balanced interpretation with explicit assumptions
+```
+
+Facts (RSI value, sentiment score, signal label) come from `state.json`; reasoning weighs them.
+
+**3. Scenario analysis (`/ask`)**
+
+Open-ended what-if questions grounded in the watchlist:
+
+```
+User: If rates stay high for 6 months, what might that mean for MU vs SPY in my list?
+Advisor: [reasoning] → scenario branches, risks, what would change the view
+```
+
+**4. Interactive follow-up (`/ask`)**
+
+Multi-turn conversation referencing prior Monitor state and earlier messages in the session. Deep discovery questions ("why SMH over XLK for my book?") belong here, not in scheduled Discovery.
+
+### Advisor node (`nodes/advisor.py`)
+
+```python
+async def advisor_respond(
+    *,
+    question: str,
+    state: dict,           # loaded from state.json
+    watchlist: list[WatchlistEntry],
+    history: list[dict],   # optional conversation turns
+    mode: str = "ask",     # "ask" | "brief"
+) -> str:
+    """Single entry point for all Advisor LLM calls — uses get_advisor_llm()."""
+```
+
+Prompt structure:
+
+1. System: advisory-only, no portfolio access, state assumptions explicitly, disclaimer
+2. Context block: serialized signals, news summary, watchlist note, suggestions from `state.json`
+3. Watchlist block: tickers + names from `watchlist.yaml`
+4. User question (or brief template for `/brief`)
+5. Instruction: reason step-by-step internally; respond with clear prose, trade-offs, and stated assumptions
+
+### Output rules
+
+- Always append: `⚠️ Not financial advice. Always do your own research.`
+- Never issue direct buy/sell orders — frame as "consider", "watch for", "conflict to resolve"
+- Cite signal data from state (e.g. "RSI 28, sentiment -0.6") — do not invent numbers
+- If data is insufficient, say so — do not hallucinate prices or headlines
+- Reasoning tokens stay internal (Ollama `reasoning=True`); user sees final prose only
+
+### Entry points
+
+| Entry | Command | Phase |
+|---|---|---|
+| Telegram `/brief` | One-shot daily narrative after latest run | 2 |
+| Telegram `/ask <question>` | Free-form reasoning query | 2 |
+| CLI `uv run pia-advisor` | REPL reading `state.json` | 2 |
+| Daemon `uv run pia-bot` | Hosts Telegram handlers + optional scheduler | 2 |
+
+### Performance expectations
+
+Advisor calls are **slow by design** (reasoning ON, longer `num_predict`). Typical latency: 30s–3min depending on model and GPU. The user triggers them explicitly and accepts the wait. Monitor runs remain fast (< 2 min target with `reasoning=False` and batched news).
 
 ---
 
 ## Telegram Bot Commands
 
-> **Phase 2** — requires long-running `main.py` daemon. Not available in timer-only deployment (v1).
+> **Phase 2** — requires long-running `main.py` / `pia-bot` daemon. Not available in timer-only deployment.
 
 All commands verify the sender matches `TELEGRAM_CHAT_ID` — unauthorized requests are silently ignored.
 
 | Command | Action |
 |---|---|
+| `/brief` | Advisor mode — macro picture + conflicts + what to watch (uses latest `state.json`) |
+| `/ask <question>` | Advisor mode — free-form reasoning (scenarios, conflicts, follow-ups) |
+| `/status` | Reports scheduler state, last Monitor run, next scheduled runs |
 | `/stop` | Graceful shutdown — stops scheduler, Telegram polling, and exits the process |
-| `/status` | Reports current scheduler state and next scheduled runs |
+
+Plain-text messages (no command) may be treated as `/ask` shorthand in a future iteration — v2 starts with explicit `/ask` only.
 
 ### `/stop` implementation
 
@@ -461,15 +664,46 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 ```
 
+### `/brief` response format
+
+```
+📋 Daily brief — your watchlist (pre_market run, 08:02)
+
+Macro: Rate expectations and semis strength dominate your list this week.
+MU and AAPL both lean bullish technically, but overnight headlines skew cautious.
+
+Conflicts:
+  • AAPL — BUY (HIGH) vs news sentiment -0.6: oversold bounce vs negative headlines
+  • SPY — HOLD with flat news: no clear edge
+
+Watch today: US CPI release; monitor MU volume if memory names re-rate.
+
+⚠️ Not financial advice. Always do your own research.
+```
+
+### `/ask` example
+
+```
+User: /ask If QQQ keeps outperforming SPY, should I shift attention within my ETFs?
+
+Advisor: [reasoning internally]
+Given your watchlist note (QQQ +8% YTD vs SPY) and current HOLD signals on both...
+[balanced analysis with assumptions stated]
+
+⚠️ Not financial advice. Always do your own research.
+```
+
 ---
 
 ## Discovery Node — Correlated Instruments
 
-`nodes/discovery.py` runs alongside the market data and news nodes. It analyses the user's watchlist and suggests additional instruments that are meaningfully correlated from a market perspective — sector peers, ETFs with high overlap, or instruments with historically high correlation to watchlist tickers.
+`nodes/discovery.py` runs in **Monitor mode only** (reasoning OFF). It produces quick, validated ticker suggestions for notifications — not deep comparative analysis.
+
+Deep questions ("why this ETF over that one for my situation?") belong in **Advisor mode** (`/ask`).
 
 ### How it works
 
-The LLM is prompted with the current watchlist and asked to reason about market relationships:
+The LLM receives the watchlist and returns structured JSON — sector peers, thematic ETFs, macro correlators, geographic pairs:
 
 - **Sector peers** — if AAPL is in the watchlist, suggest MSFT, GOOGL, or SMH (semiconductor ETF)
 - **Thematic ETFs** — if individual tech stocks are monitored, suggest QQQ or XLK
@@ -501,10 +735,8 @@ The LLM is prompted with the current watchlist and asked to reason about market 
 
 ```
 💡 Related instruments to watch:
-  SMH  — VanEck Semiconductor ETF
-         High overlap with your AAPL/MSFT watchlist
-  TLT  — iShares 20Y Treasury Bond ETF
-         Inverse correlation to SPY — useful hedge context
+  SMH — VanEck Semiconductor ETF — High overlap with your AAPL/MSFT watchlist
+  TLT — iShares 20Y Treasury Bond ETF — Inverse correlation to SPY — useful hedge context
 ```
 
 ---
@@ -553,9 +785,9 @@ uv run python src/console.py
 
 ### Shared state file (`data/state.json`)
 
-Written by the scheduler after every run. Console reads this file.
+Written by Monitor runs after every pipeline execution. **Console and Advisor read this file** — it is the shared bridge between fast scheduled monitoring and on-demand decision support.
 
-**Write atomically:** write to `data/state.json.tmp`, then `os.replace()` to `data/state.json` so the console never reads a partial file.
+**Write atomically:** write to `data/state.json.tmp`, then `os.replace()` to `data/state.json` so readers never see a partial file.
 
 ```json
 {
@@ -628,7 +860,7 @@ Per-ticker `alerts.rsi_oversold` / `rsi_overbought` override the global defaults
 
 - **Sources**: configurable RSS feeds in `.env` plus a watchlist-specific Google News feed built at runtime
 - **Fetch**: `httpx` async GET; validate each feed URL at startup and log failures
-- **Sentiment**: scored -1.0 to +1.0 via local Ollama (batch headlines where possible to limit calls)
+- **Sentiment**: scored -1.0 to +1.0 via local Ollama — **one batched call** for all tickers, `reasoning=False`
 - **Relevance filter**: only news mentioning the ticker or company name
 - **Time window**: last 24 hours only
 
@@ -705,8 +937,8 @@ RSI: 74 (overbought) | EMA trend: weakening | News: Negative (-0.6)
 Among your monitored ETFs, QQQ has outperformed SPY by 8% YTD.
 
 💡 Related instruments to watch:
-  SMH  — High overlap with your AAPL/MSFT watchlist
-  TLT  — Inverse correlation to SPY — useful hedge context
+  SMH — VanEck Semiconductor ETF — High overlap with your AAPL/MSFT watchlist
+  TLT — iShares 20Y Treasury Bond ETF — Inverse correlation to SPY — useful hedge context
 
 ⚠️ Not financial advice. Always do your own research.
 ```
@@ -715,7 +947,7 @@ Among your monitored ETFs, QQQ has outperformed SPY by 8% YTD.
 - Send when there is at least one notifiable signal (BUY/SELL, or WATCH with MEDIUM/HIGH confidence), **or** validated discovery suggestions, **or** a watchlist note
 - Skip notification only when all signals are HOLD/LOW, no suggestions, and no watchlist note
 - Max 10 tickers per message; truncate with a note if watchlist is larger
-- Telegram bot commands: `/stop`, `/status` (see Service Lifecycle section)
+- Telegram bot commands: `/brief`, `/ask`, `/status`, `/stop` (phase 2 daemon — see Advisor Mode)
 - Email subject: `[PIA] Market Update — {date}` (optional — see `EMAIL_ENABLED`)
 
 ---
@@ -730,7 +962,7 @@ All times use `TIMEZONE` from `.env` (default `Europe/Rome` / CET). Scheduler us
 | Midday | 13:00 | News refresh and sentiment update; re-run Analyst on **unchanged daily indicators** |
 | End of day | 17:30 | Full daily summary after US cash session |
 
-**Midday caveat:** technical indicators use daily OHLCV only — RSI/MACD/EMA do not change intraday. The midday run adds value via fresh news and updated LLM rationale, not new candle-based signals.
+**Midday caveat:** technical indicators use daily OHLCV only — RSI/MACD/EMA do not change intraday. The midday Monitor run adds value via fresh news and updated rationale polish, not new candle-based signals. Use Advisor `/ask` for intraday interpretation if needed.
 
 ### Market calendar (v1)
 
@@ -746,6 +978,14 @@ All times use `TIMEZONE` from `.env` (default `Europe/Rome` / CET). Scheduler us
 # LLM — edit OLLAMA_MODEL to swap without code changes
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
+
+# Monitor pipeline — fast, reasoning OFF
+OLLAMA_NUM_CTX=8192
+OLLAMA_NUM_PREDICT=512
+
+# Advisor mode — reasoning ON (phase 2)
+OLLAMA_ADVISOR_NUM_CTX=16384
+OLLAMA_ADVISOR_NUM_PREDICT=4096
 
 # Telegram
 TELEGRAM_BOT_TOKEN=your_token_here
@@ -766,9 +1006,11 @@ TIMEZONE=Europe/Rome
 SKIP_LOW_CONFIDENCE=true
 MAX_TICKERS_PER_NOTIFICATION=10
 MAX_NEWS_HEADLINES_PER_TICKER=5
+MAX_NEWS_HEADLINES_TOTAL=20
 EMAIL_ENABLED=false
 LOG_LEVEL=INFO
 LOG_TO_CONSOLE=false
+ADVISOR_STALE_STATE_HOURS=2
 ```
 
 ---
@@ -788,25 +1030,36 @@ LOG_TO_CONSOLE=false
 |---|---|---|
 | **yfinance** | Unofficial API; rate limits and breakage | Per-ticker retry (max 2); cache last-good OHLCV in memory for the run; log and skip failed tickers |
 | **RSS feeds** | URLs change or return empty | Validate at startup; configurable `RSS_FEEDS`; continue without news on failure |
-| **Ollama** | Latency under load; platform-specific GPU | Batch news sentiment; cap discovery to 3 suggestions; use `qwen3:8b` for scheduled runs; verify GPU with `ollama ps` (Metal on macOS, CUDA/ROCm on Linux) |
-| **Discovery LLM** | Invalid ticker hallucination | Validate every suggestion via yfinance before state/notifications |
+| **Ollama (Monitor)** | Latency under load | `reasoning=False`; batch news in one call; `num_ctx=8192`; cap headlines |
+| **Ollama (Advisor)** | Slow responses expected | User-triggered only; `reasoning=True`; show "thinking…" in Telegram |
+| **Discovery LLM** | Invalid ticker hallucination | Validate every suggestion via yfinance; deep analysis → Advisor `/ask` |
 
 ---
 
-## Testing (v1)
+## Testing
 
-No automated test suite required for v1 — use a manual smoke checklist before enabling scheduled deployment:
+**Phase 1 — Monitor pipeline (manual smoke checklist)**
 
 - [ ] `uv run pia-graph` completes on **macOS** with signals in output
 - [ ] `uv run pia-graph` completes on **Linux** with signals in output (same `.env` + watchlist)
 - [ ] Ollama reachable — `ollama ps` shows model loaded; GPU backend as expected for host
+- [ ] Monitor run completes in reasonable time with `reasoning=False` (< 2 min for ~8 tickers)
 - [ ] Fetch one watchlist ticker via `yfinance_tool` — OHLCV + indicators present
 - [ ] `market_calendar` returns correct open/closed for today
 - [ ] Full graph run produces `data/state.json` with signals
-- [ ] Telegram bot sends a test message to `TELEGRAM_CHAT_ID` (when configured)
-- [ ] `/status` and `/stop` respond from authorized chat only (phase 2 daemon only)
+- [ ] Telegram bot sends a test notification to `TELEGRAM_CHAT_ID` (when configured)
 - [ ] Console displays `state.json` without error
 - [ ] launchd timers or systemd timers fire `pia-run` at expected times (post-deploy)
+
+**Phase 2 — Advisor mode**
+
+- [ ] `/brief` returns watchlist-specific narrative using latest `state.json`
+- [ ] `/ask` resolves a technical vs news conflict using real signal data from state
+- [ ] `/ask` scenario question states assumptions explicitly; no invented prices
+- [ ] Advisor warns when `state.json` is missing or stale (> `ADVISOR_STALE_STATE_HOURS`)
+- [ ] `/status` and `/stop` respond from authorized chat only
+- [ ] `uv run pia-advisor` REPL works without Telegram
+- [ ] Monitor pipeline still uses `get_llm()` (reasoning OFF) after Advisor is added
 
 ---
 
@@ -819,6 +1072,8 @@ No automated test suite required for v1 — use a manual smoke checklist before 
 - Type hints on all function signatures
 - Docstrings on all node functions and public tools
 - Never instantiate `ChatOllama` outside `src/llm.py`
+- Use `get_llm()` in Monitor nodes; use `get_advisor_llm()` only in `advisor.py`
+- Never enable `reasoning=True` in Monitor pipeline nodes
 - Never hardcode ticker symbols — always read from `watchlist.yaml`
 - Never hardcode secrets — always read from `.env` via `pydantic-settings`
 
@@ -826,35 +1081,43 @@ No automated test suite required for v1 — use a manual smoke checklist before 
 
 ## Build Order
 
-Recommended path to a working v1 (Telegram before email; graph before deployment):
-
-**Core logic (current focus)**
+**Phase 1 — Monitor pipeline** ✅
 
 1. `state.py` + `config.py` + `watchlist.yaml` loader
-2. `llm.py` — verify Ollama connectivity before proceeding
+2. `llm.py` — `get_llm()` with `reasoning=False`
 3. `tools/yfinance_tool.py` + `tools/indicators.py`
-4. `tools/market_calendar.py` — verify holiday/weekend skipping
-5. `nodes/market_data.py` — verify indicator output manually
-6. `tools/telegram_client.py` — wire up early for fast feedback
-7. `tools/news_fetcher.py` + `nodes/news_analyst.py`
-8. `nodes/discovery.py` — correlated instrument suggestions + yfinance validation
-9. `nodes/analyst.py` — rule-based signals + watchlist note
-10. `nodes/notifier.py` — Telegram first; email when `EMAIL_ENABLED=true`
-11. `nodes/supervisor.py` + `graph.py` — parallel fan-out and join
-12. `run_graph.py` — manual CLI (`pia-graph`) for development
-13. Manual smoke tests (see Testing section)
+4. `tools/market_calendar.py`
+5. `nodes/market_data.py`
+6. `tools/telegram_client.py` + `tools/email_client.py`
+7. `tools/news_fetcher.py` + `nodes/news_analyst.py` (single batched LLM call)
+8. `nodes/discovery.py`
+9. `nodes/analyst.py` — rule-based signals + rationale polish (notifiable only)
+10. `nodes/notifier.py`
+11. `nodes/supervisor.py` + `graph.py`
+12. `run_graph.py` + `run_once.py` + `state_persistence.py`
+13. Manual smoke tests — Monitor checklist
 
-**Deployment (after core logic)**
+**Deployment — timer-only Monitor runs**
 
-14. `run_once.py` — scheduled CLI (`pia-run`) + atomic `state.json` writer
-15. `deploy/launchd/` — macOS calendar plists for three daily runs
-16. `deploy/systemd/` — Linux user timers + oneshot service units
-17. `src/console.py` — rich terminal dashboard
+14. `deploy/launchd/` — macOS calendar plists for three daily runs
+15. `deploy/systemd/` — Linux user timers + oneshot service units
+16. `src/console.py` — rich terminal dashboard
 
-**Optional phase 2**
+**Phase 2 — Advisor mode (decision support)**
 
-18. `main.py` — long-running `AsyncIOScheduler` + Telegram commands (`/stop`, `/status`)
-19. launchd agent or `systemd` user service for persistent bot process
+17. `llm.py` — add `get_advisor_llm()` with `reasoning=True`
+18. `nodes/advisor.py` — `/brief` and `/ask` prompt templates over `state.json`
+19. `run_advisor.py` — interactive CLI REPL (`pia-advisor`)
+20. `bot/telegram_handlers.py` — `/brief`, `/ask`, `/status`, `/stop`
+21. `main.py` — long-running daemon (`pia-bot`) with Telegram polling + optional scheduler
+22. launchd agent or `systemd` user service for persistent bot process
+23. Manual smoke tests — Advisor checklist
+
+**Phase 3 — optional enhancements**
+
+24. Multi-turn session memory persisted across `/ask` messages
+25. Proactive `/brief` push after pre-market run (Telegram notification with brief attached)
+26. Optional fresh-data tools in Advisor (on-demand quote fetch for `/ask`)
 
 ---
 

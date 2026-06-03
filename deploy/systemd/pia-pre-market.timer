@@ -1,0 +1,10 @@
+[Unit]
+Description=Personal Investment Assistant — pre-market run (08:00)
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+Unit=pia-run@pre_market.service
+
+[Install]
+WantedBy=timers.target

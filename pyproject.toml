@@ -31,3 +31,6 @@ packages = ["src"]
 pia-spike = "src.run_market_spike:main"
 pia-graph = "src.run_graph:main"
 pia-run = "src.run_once:main"
+pia-console = "src.console:main"
+pia-advisor = "src.run_advisor:main"
+pia-bot = "src.main:main"

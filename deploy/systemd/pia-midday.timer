@@ -1,0 +1,10 @@
+[Unit]
+Description=Personal Investment Assistant — midday run (13:00)
+
+[Timer]
+OnCalendar=*-*-* 13:00:00
+Persistent=true
+Unit=pia-run@midday.service
+
+[Install]
+WantedBy=timers.target

@@ -1,4 +1,4 @@
-"""News analyst node — RSS fetch + batched LLM sentiment scoring."""
+"""News analyst node — RSS fetch + single batched LLM sentiment scoring."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import logging
 import re
 
-from src.config import load_watchlist, settings
+from src.config import WatchlistEntry, load_watchlist, settings
 from src.llm import get_llm
 from src.state import AgentState
 from src.tools.news_fetcher import (
@@ -47,36 +47,39 @@ def _parse_sentiment_batch(response_text: str, count: int) -> list[float]:
     return numbers + [0.0] * (count - len(numbers))
 
 
-def _score_headlines_batch_sync(ticker: str, articles: list[dict]) -> list[float]:
-    """Score multiple headlines in one Ollama call."""
-    if not articles:
+def _score_headlines_batch_sync(
+    scored_items: list[tuple[WatchlistEntry, dict]],
+) -> list[float]:
+    """Score all watchlist headlines in one Ollama call."""
+    if not scored_items:
         return []
 
     lines = []
-    for index, article in enumerate(articles, start=1):
+    for index, (entry, article) in enumerate(scored_items, start=1):
         summary = article.get("summary", "").strip()
         if summary:
-            lines.append(f'{index}. Headline: {article["title"]}\n   Summary: {summary}')
+            lines.append(
+                f'{index}. [{entry.ticker}] Headline: {article["title"]}\n   Summary: {summary}'
+            )
         else:
-            lines.append(f'{index}. Headline: {article["title"]}')
+            lines.append(f'{index}. [{entry.ticker}] Headline: {article["title"]}')
 
     llm = get_llm(temperature=0.0)
     prompt = (
-        f"Score headline sentiment for {ticker} investors.\n"
-        f"Return ONLY a JSON array of {len(articles)} numbers from -1.0 (very negative) "
+        f"Score headline sentiment for investors in each bracketed ticker.\n"
+        f"Return ONLY a JSON array of {len(scored_items)} numbers from -1.0 (very negative) "
         f"to +1.0 (very positive), in the same order as the headlines.\n\n"
         + "\n".join(lines)
     )
     response = llm.invoke(prompt)
     content = str(response.content if hasattr(response, "content") else response)
-    return _parse_sentiment_batch(content, len(articles))
+    return _parse_sentiment_batch(content, len(scored_items))
 
 
 async def news_analyst_node(state: AgentState) -> dict:
     """Fetch RSS headlines and score sentiment for watchlist tickers."""
     new_errors: list[str] = []
     news_items: list[dict] = []
-    batch_calls = 0
     entries = load_watchlist()
     tickers = [entry.ticker for entry in entries]
     feed_urls = [watchlist_google_news_feed(tickers)]
@@ -92,6 +95,8 @@ async def news_analyst_node(state: AgentState) -> dict:
         return {"news_items": news_items, "errors": new_errors}
 
     headline_limit = settings.MAX_NEWS_HEADLINES_PER_TICKER
+    total_limit = settings.MAX_NEWS_HEADLINES_TOTAL
+    scored_items: list[tuple[WatchlistEntry, dict]] = []
 
     for entry in entries:
         relevant = filter_relevant_articles(
@@ -99,36 +104,37 @@ async def news_analyst_node(state: AgentState) -> dict:
             ticker=entry.ticker,
             company_name=entry.name,
         )
-        if not relevant:
-            continue
+        for article in relevant[:headline_limit]:
+            scored_items.append((entry, article))
+            if len(scored_items) >= total_limit:
+                break
+        if len(scored_items) >= total_limit:
+            break
 
-        batch = relevant[:headline_limit]
-        try:
-            sentiments = await asyncio.to_thread(
-                _score_headlines_batch_sync,
-                entry.ticker,
-                batch,
+    if not scored_items:
+        logger.info("News analyst: no relevant headlines to score")
+        return {"news_items": news_items, "errors": new_errors}
+
+    try:
+        sentiments = await asyncio.to_thread(_score_headlines_batch_sync, scored_items)
+        for (entry, article), sentiment in zip(scored_items, sentiments, strict=True):
+            news_items.append(
+                {
+                    "ticker": entry.ticker,
+                    "headline": article["title"],
+                    "source": article.get("source", ""),
+                    "link": article.get("link", ""),
+                    "published": article.get("published"),
+                    "sentiment": sentiment,
+                }
             )
-            batch_calls += 1
-            for article, sentiment in zip(batch, sentiments, strict=True):
-                news_items.append(
-                    {
-                        "ticker": entry.ticker,
-                        "headline": article["title"],
-                        "source": article.get("source", ""),
-                        "link": article.get("link", ""),
-                        "published": article.get("published"),
-                        "sentiment": sentiment,
-                    }
-                )
-        except Exception as exc:
-            message = f"{entry.ticker}: batched sentiment scoring failed ({exc})"
-            logger.warning(message)
-            new_errors.append(message)
+    except Exception as exc:
+        message = f"Batched sentiment scoring failed ({exc})"
+        logger.warning(message)
+        new_errors.append(message)
 
     logger.info(
-        "News analyst: %d scored items from %d Ollama batch calls",
+        "News analyst: %d scored items from 1 Ollama batch call",
         len(news_items),
-        batch_calls,
     )
     return {"news_items": news_items, "errors": new_errors}

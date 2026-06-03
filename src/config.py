@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen3:8b"
+    OLLAMA_NUM_CTX: int = 8192
+    OLLAMA_NUM_PREDICT: int = 512
+    OLLAMA_ADVISOR_NUM_CTX: int = 16384
+    OLLAMA_ADVISOR_NUM_PREDICT: int = 4096
 
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
@@ -64,9 +68,11 @@ class Settings(BaseSettings):
     SKIP_LOW_CONFIDENCE: bool = True
     MAX_TICKERS_PER_NOTIFICATION: int = 10
     MAX_NEWS_HEADLINES_PER_TICKER: int = 5
+    MAX_NEWS_HEADLINES_TOTAL: int = 20
     EMAIL_ENABLED: bool = False
     LOG_LEVEL: str = "INFO"
     LOG_TO_CONSOLE: bool = False
+    ADVISOR_STALE_STATE_HOURS: float = 2.0
 
     @property
     def rss_feed_list(self) -> list[str]:

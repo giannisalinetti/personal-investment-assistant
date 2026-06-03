@@ -60,6 +60,7 @@ async def discovery_node(state: AgentState) -> dict:
         new_errors.append(message)
         return {"suggestions": suggestions, "discovered": suggestions, "errors": new_errors}
 
+    candidates: list[dict] = []
     for item in raw_suggestions[:MAX_SUGGESTIONS]:
         ticker = str(item.get("ticker", "")).upper().strip()
         confidence = str(item.get("confidence", "LOW")).upper()
@@ -67,11 +68,7 @@ async def discovery_node(state: AgentState) -> dict:
             continue
         if confidence not in {"HIGH", "MEDIUM"}:
             continue
-        if not await validate_ticker(ticker):
-            new_errors.append(f"Discovery: dropped invalid ticker {ticker}")
-            continue
-
-        suggestions.append(
+        candidates.append(
             {
                 "ticker": ticker,
                 "name": str(item.get("name", ticker)),
@@ -80,6 +77,16 @@ async def discovery_node(state: AgentState) -> dict:
                 "confidence": confidence,
             }
         )
+
+    if candidates:
+        validations = await asyncio.gather(
+            *[validate_ticker(item["ticker"]) for item in candidates]
+        )
+        for item, valid in zip(candidates, validations, strict=True):
+            if not valid:
+                new_errors.append(f"Discovery: dropped invalid ticker {item['ticker']}")
+                continue
+            suggestions.append(item)
 
     logger.info("Discovery: %d validated suggestions", len(suggestions))
     return {

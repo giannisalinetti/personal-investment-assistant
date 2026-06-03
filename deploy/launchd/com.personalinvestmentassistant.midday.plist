@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.personalinvestmentassistant.midday</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-run</string>
+        <string>--run-type</string>
+        <string>midday</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/ABS/PATH/TO/Personal-Investment-Assistant</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>13</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/ABS/PATH/TO/Personal-Investment-Assistant/logs/stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>TZ</key>
+        <string>Europe/Rome</string>
+    </dict>
+</dict>
+</plist>

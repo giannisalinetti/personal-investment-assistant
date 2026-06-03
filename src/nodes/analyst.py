@@ -10,6 +10,7 @@ from statistics import mean
 
 from src.config import settings
 from src.llm import get_llm
+from src.nodes.notifier import _is_notifiable_signal
 from src.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -181,11 +182,12 @@ async def analyst_node(state: AgentState) -> dict:
 
     watchlist_note = _build_watchlist_note(market_data)
     new_errors: list[str] = []
+    signals_for_polish = [signal for signal in signals if _is_notifiable_signal(signal)]
 
     try:
         polished_rationales, polished_note = await asyncio.to_thread(
             _polish_language_sync,
-            signals,
+            signals_for_polish,
             watchlist_note,
         )
         for signal in signals:

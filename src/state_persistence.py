@@ -53,3 +53,59 @@ def persist_state(state: AgentState) -> Path:
     os.replace(STATE_TMP_PATH, STATE_PATH)
     logger.info("Persisted state to %s", STATE_PATH)
     return STATE_PATH
+
+
+def load_state() -> dict | None:
+    """Load persisted Monitor state, or None if missing or invalid."""
+    if not STATE_PATH.exists():
+        return None
+    try:
+        document = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read state.json: %s", exc)
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def state_age_hours(document: dict) -> float | None:
+    """Return hours since last_run, or None if timestamp is missing or invalid."""
+    last_run = document.get("last_run")
+    if not last_run:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(last_run).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
+    return delta.total_seconds() / 3600.0
+
+
+def is_state_stale(document: dict | None) -> bool:
+    """Return True when state is missing or older than ADVISOR_STALE_STATE_HOURS."""
+    if document is None:
+        return True
+    age = state_age_hours(document)
+    if age is None:
+        return True
+    return age > settings.ADVISOR_STALE_STATE_HOURS
+
+
+def stale_state_warning(document: dict | None) -> str | None:
+    """Return a user-facing warning when Monitor state is missing or stale."""
+    if document is None:
+        return (
+            "No Monitor run data found. Run `uv run pia-graph` or wait for the next "
+            "scheduled `pia-run` before asking for analysis."
+        )
+    age = state_age_hours(document)
+    if age is None:
+        return "Monitor state timestamp is invalid — results may be unreliable."
+    if age > settings.ADVISOR_STALE_STATE_HOURS:
+        return (
+            f"Monitor data is {age:.1f}h old (stale after "
+            f"{settings.ADVISOR_STALE_STATE_HOURS:g}h). Consider running "
+            "`uv run pia-graph` for fresh signals."
+        )
+    return None

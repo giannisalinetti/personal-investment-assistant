@@ -1,0 +1,16 @@
+[Unit]
+Description=Personal Investment Assistant — Advisor Telegram daemon
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABS/PATH/TO/Personal-Investment-Assistant
+EnvironmentFile=/ABS/PATH/TO/Personal-Investment-Assistant/.env
+Environment=TZ=Europe/Rome
+ExecStart=/ABS/PATH/TO/Personal-Investment-Assistant/.venv/bin/pia-bot
+Restart=on-failure
+StandardOutput=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/bot-stdout.log
+StandardError=append:/ABS/PATH/TO/Personal-Investment-Assistant/logs/bot-stderr.log
+
+[Install]
+WantedBy=default.target
