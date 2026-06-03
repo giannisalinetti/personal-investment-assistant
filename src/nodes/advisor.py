@@ -24,6 +24,7 @@ from src.config import WatchlistEntry, settings
 from src.tools.ticker_extract import extract_adhoc_tickers
 from src.llm import get_advisor_llm
 from src.state_persistence import stale_state_warning
+from src.tools.fundamentals_tool import fetch_fundamentals_batch
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
 from src.tools.quote_tool import fetch_quotes
 
@@ -201,6 +202,64 @@ def _format_live_quotes_block(quotes_by_ticker: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_valuation_block(fundamentals_by_ticker: dict[str, dict]) -> str:
+    if not fundamentals_by_ticker:
+        return "No valuation metrics fetched."
+
+    lines = [
+        "(yfinance — trailing P/E, forward P/E, PEG; fetched on demand, Advisor only. "
+        "Often unavailable for ETFs and some international symbols.)",
+    ]
+    for ticker, metrics in fundamentals_by_ticker.items():
+        trailing = metrics.get("trailing_pe")
+        forward = metrics.get("forward_pe")
+        peg = metrics.get("peg_ratio")
+        as_of = metrics.get("as_of", "")
+        parts: list[str] = []
+        parts.append(f"trailing P/E {trailing:.1f}" if trailing is not None else "trailing P/E —")
+        parts.append(f"forward P/E {forward:.1f}" if forward is not None else "forward P/E —")
+        parts.append(f"PEG {peg:.2f}" if peg is not None else "PEG —")
+        lines.append(f"- {ticker}: {', '.join(parts)} (as of {as_of})")
+    return "\n".join(lines)
+
+
+def _fundamentals_tickers(
+    *,
+    mode: str,
+    question: str,
+    watchlist: list[WatchlistEntry],
+    entries: list[WatchlistEntry],
+) -> list[str]:
+    if not settings.ADVISOR_FETCH_FUNDAMENTALS:
+        return []
+    if mode == "brief":
+        return [entry.ticker for entry in watchlist]
+    if entries:
+        return [entry.ticker for entry in entries]
+    mentioned = _entries_mentioned_in_text(question, watchlist)
+    return [entry.ticker for entry in mentioned]
+
+
+async def _fetch_valuation_metrics(
+    *,
+    mode: str,
+    question: str,
+    watchlist: list[WatchlistEntry],
+    entries: list[WatchlistEntry],
+) -> tuple[dict[str, dict], list[str]]:
+    tickers = _fundamentals_tickers(
+        mode=mode,
+        question=question,
+        watchlist=watchlist,
+        entries=entries,
+    )
+    if not tickers:
+        return {}, []
+    fundamentals, errors = await fetch_fundamentals_batch(tickers)
+    logger.info("Advisor valuation metrics: %s", list(fundamentals))
+    return fundamentals, errors
+
+
 async def _fetch_live_quotes(entries: list[WatchlistEntry]) -> tuple[dict[str, dict], list[str]]:
     if not settings.ADVISOR_FETCH_QUOTES or not entries:
         return {}, []
@@ -317,6 +376,7 @@ def _build_prompt(
     mode: str,
     fresh_headlines: dict[str, list[dict]],
     live_quotes: dict[str, dict],
+    valuation: dict[str, dict],
     on_demand: dict | None,
     scan: IndicatorScanResult | None,
 ) -> str:
@@ -327,9 +387,12 @@ def _build_prompt(
         "- Latest Monitor run covers the configured watchlist only\n"
         "- Indicator scan results include a pre-computed exact_leader — always state that ticker and value\n"
         "- On-demand analysis covers explicitly mentioned tickers outside the watchlist\n"
-        "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Live quotes, and Fresh headlines\n"
+        "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Valuation metrics, "
+        "Live quotes, and Fresh headlines\n"
+        "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for expensive/cheap/valuation questions\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
-        "- Do not invent prices, RSI values, or headlines not present in the context\n"
+        "- Do not invent prices, RSI, P/E, PEG values, or headlines not present in the context\n"
+        "- Note when P/E or PEG is unavailable (common for ETFs); do not substitute guesses\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
         "- Reason step-by-step internally, then respond with clear prose only"
@@ -351,6 +414,9 @@ def _build_prompt(
         "",
         "=== Live quotes ===",
         _format_live_quotes_block(live_quotes),
+        "",
+        "=== Valuation metrics (Advisor only) ===",
+        _format_valuation_block(valuation),
         "",
         "=== Fresh headlines (live RSS) ===",
         _format_fresh_headlines_block(fresh_headlines),
@@ -402,7 +468,15 @@ async def advisor_respond(
     fresh_headlines, fetch_errors = await _fetch_fresh_headlines(entries)
     link_entries = entries or _entries_mentioned_in_text(question, watchlist)
     quote_entries = link_entries if settings.ADVISOR_FETCH_QUOTES else []
-    live_quotes, quote_errors = await _fetch_live_quotes(quote_entries)
+    (live_quotes, quote_errors), (valuation, fundamentals_errors) = await asyncio.gather(
+        _fetch_live_quotes(quote_entries),
+        _fetch_valuation_metrics(
+            mode=mode,
+            question=question,
+            watchlist=watchlist,
+            entries=entries,
+        ),
+    )
 
     prompt = _build_prompt(
         question=question,
@@ -412,6 +486,7 @@ async def advisor_respond(
         mode=mode,
         fresh_headlines=fresh_headlines,
         live_quotes=live_quotes,
+        valuation=valuation,
         on_demand=on_demand,
         scan=scan,
     )
@@ -436,6 +511,10 @@ async def advisor_respond(
         prefix_parts.append("⚠️ Some headline feeds failed: " + "; ".join(fetch_errors[:3]))
     if quote_errors:
         prefix_parts.append("⚠️ Some quote fetches failed: " + "; ".join(quote_errors[:3]))
+    if fundamentals_errors:
+        prefix_parts.append(
+            "⚠️ Some valuation metric fetches failed: " + "; ".join(fundamentals_errors[:3])
+        )
     if on_demand and on_demand.get("signals"):
         tickers = ", ".join(on_demand["tickers"])
         prefix_parts.append(f"ℹ️ On-demand analysis fetched for {tickers}.")

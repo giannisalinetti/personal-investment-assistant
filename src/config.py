@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     ADVISOR_NEWS_HEADLINES_PER_TICKER: int = 8
     ADVISOR_HISTORY_MAX_TURNS: int = 20
     ADVISOR_FETCH_QUOTES: bool = True
+    ADVISOR_FETCH_FUNDAMENTALS: bool = True
     ADVISOR_ADHOC_ANALYSIS: bool = True
     ADVISOR_ADHOC_MAX_TICKERS: int = 3
     ADVISOR_SCAN_ENABLED: bool = True

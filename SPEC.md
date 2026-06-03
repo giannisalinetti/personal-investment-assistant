@@ -24,7 +24,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 | **1** | Monitor pipeline (LangGraph, signals, notifications) | ✅ Complete |
 | **Deployment** | `pia-run` timers, `pia-console`, deploy templates | ✅ Templates ready — install when project is complete |
 | **2** | Advisor mode (CLI, Telegram, reasoning, fresh news, useful links) | ✅ Complete |
-| **3** | Production Advisor (persisted memory, proactive brief, live quotes, scans, `pia-bot` install scripts) | ✅ Complete |
+| **3** | Production Advisor (persisted memory, proactive brief, live quotes, valuation metrics, scans, `pia-bot` install scripts) | ✅ Complete |
 | **4** | Browser web app (dashboard + advisor chat) | Planned |
 
 ---
@@ -59,6 +59,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 - Remember conversation context across Advisor restarts (`data/advisor/history.json`, `/clear`)
 - Deliver a proactive morning brief after the pre-market Monitor run (`PROACTIVE_BRIEF_*` flags)
 - Fetch live quotes on demand when answering Advisor questions
+- Fetch valuation metrics on demand (trailing P/E, forward P/E, PEG) — Advisor only, not Monitor
 - Ad-hoc ticker analysis and indicator scans for symbols/comparisons outside the watchlist
 - Install scripts for `pia-bot` (`deploy/install-pia-bot-macos.sh`, `deploy/install-pia-bot-linux.sh`) — run after local validation
 
@@ -353,6 +354,7 @@ Personal-Investment-Assistant/
         ├── indicators.py
         ├── news_fetcher.py
         ├── quote_tool.py         # Phase 3 — on-demand live quotes for Advisor
+        ├── fundamentals_tool.py  # Advisor only — trailing/forward P/E, PEG via yfinance
         ├── market_calendar.py    # pandas_market_calendars wrapper
         ├── telegram_client.py
         └── email_client.py
@@ -604,8 +606,9 @@ Prompt structure:
 1. System: advisory-only, no portfolio access, state assumptions explicitly, disclaimer
 2. Context block: serialized signals, news summary, watchlist note, suggestions from `state.json`
 3. Watchlist block: tickers + names from `watchlist.yaml`
-4. User question (or brief template for `/brief`)
-5. Instruction: reason step-by-step internally; respond with clear prose, trade-offs, and stated assumptions
+4. On-demand blocks (fetched per request, not from Monitor): indicator scan, ad-hoc analysis, live quotes, **valuation metrics**, fresh headlines
+5. User question (or brief template for `/brief`)
+6. Instruction: reason step-by-step internally; respond with clear prose, trade-offs, and stated assumptions
 
 ### Output rules
 
@@ -636,7 +639,16 @@ The following Advisor capabilities shipped with Phase 2 and are **not** deferred
 - **Useful links** — headline URLs plus Yahoo Finance quote and Google News search links appended to every Advisor reply
 - **Session disclaimer** — financial-advice disclaimer shown once per CLI session or Telegram `/start`, not on every message
 
-Phase 3 adds **persisted** memory, **proactive** brief delivery, **live quotes**, **ad-hoc/scanned** market analysis, and **production deployment scripts** for the Advisor daemon.
+Phase 3 adds **persisted** memory, **proactive** brief delivery, **live quotes**, **valuation metrics**, **ad-hoc/scanned** market analysis, and **production deployment scripts** for the Advisor daemon.
+
+### Phase 3+ — valuation metrics (Advisor only)
+
+- **`src/tools/fundamentals_tool.py`** — on-demand yfinance fetch of trailing P/E, forward P/E, and PEG
+- Wired into `advisor_respond()` as a **Valuation metrics** prompt block (parallel to live quotes)
+- Fetched for `/brief` (full watchlist) and `/ask` (tickers targeted for the question)
+- **Not** used by the Monitor pipeline — fundamentals change slowly and are irrelevant to scheduled signal alerts
+- Config: `ADVISOR_FETCH_FUNDAMENTALS=true` (default true)
+- PEG is included when yfinance returns it; often missing for ETFs and some symbols — LLM must not invent values
 
 ---
 
@@ -1058,6 +1070,7 @@ ADVISOR_NEWS_HEADLINES_PER_TICKER=8
 # Phase 3 — Advisor production
 ADVISOR_HISTORY_MAX_TURNS=20
 ADVISOR_FETCH_QUOTES=true
+ADVISOR_FETCH_FUNDAMENTALS=true
 PROACTIVE_BRIEF_ENABLED=false
 PROACTIVE_BRIEF_VIA=telegram
 PROACTIVE_BRIEF_SKIP_IF_NOTIFY=false
@@ -1121,6 +1134,7 @@ PIA_WEB_TOKEN=
 - [x] Conversation history survives `pia-advisor` and `pia-bot` restarts
 - [x] Pre-market run triggers proactive `/brief` when `PROACTIVE_BRIEF_ENABLED=true` (hook in `run_once.py`; live dispatch requires Telegram/email configured)
 - [x] Advisor `/ask` includes live quote snapshot for mentioned tickers (price, change %, as-of)
+- [x] Advisor `/ask` and `/brief` include valuation metrics when enabled (trailing P/E, forward P/E, PEG)
 - [ ] `pia-bot` installed and running via launchd (macOS) or systemd (Linux) — install scripts ready; run `./deploy/install-pia-bot-macos.sh` when validated
 - [x] Proactive brief does not duplicate the standard Monitor notification when `PROACTIVE_BRIEF_SKIP_IF_NOTIFY=true`
 - [x] Ad-hoc ticker analysis for symbols not on the watchlist (`ADVISOR_ADHOC_ANALYSIS`)
@@ -1194,7 +1208,20 @@ PROACTIVE_BRIEF_VIA=telegram   # telegram | email | both
 - Quotes are **facts from yfinance** — LLM must not invent prices when this block is present
 - Config: `ADVISOR_FETCH_QUOTES=true` (default true in Phase 3)
 
-### 4. Install `pia-bot` service (Advisor daemon)
+### 4. On-demand valuation metrics (Advisor only)
+
+**Problem:** Technical signals (RSI, MACD) do not answer “is this stock expensive?” — valuation ratios are a separate lens.
+
+**Design:**
+
+- Add `src/tools/fundamentals_tool.py` — yfinance fetch of trailing P/E, forward P/E, and PEG
+- Advisor calls `fetch_fundamentals_batch(tickers)` before building the prompt (parallel with live quotes)
+- Inject a **Valuation metrics** block — facts from yfinance; LLM must not invent P/E or PEG when absent
+- Scope: `/brief` → full watchlist; `/ask` → tickers targeted for the question (mentioned symbols, ad-hoc tickers)
+- **Monitor pipeline unchanged** — no fundamentals in `state.json` or scheduled notifications
+- Config: `ADVISOR_FETCH_FUNDAMENTALS=true` (default true)
+
+### 5. Install `pia-bot` service (Advisor daemon)
 
 **Problem:** Phase 2 provides templates only; Advisor must run persistently for Telegram.
 
@@ -1222,8 +1249,9 @@ systemctl --user enable --now pia-bot.service
 25. Wire history into `run_advisor.py` and `bot/telegram_handlers.py`; add `/clear`
 26. `src/tools/quote_tool.py` — on-demand quote fetch; wire into `advisor.py`
 27. Proactive brief hook in `run_once.py` + config flags
-28. Install and document `pia-bot` launchd/systemd service (final deploy step for Advisor)
-29. Manual smoke tests — Phase 3 checklist
+28. `src/tools/fundamentals_tool.py` — on-demand P/E and PEG; Advisor prompt block only
+29. Install and document `pia-bot` launchd/systemd service (final deploy step for Advisor)
+30. Manual smoke tests — Phase 3 checklist
 
 ---
 
@@ -1347,8 +1375,9 @@ Browser  ←HTTP→  pia-web (FastAPI or Starlette)
 26. `quote_tool.py` — on-demand live quotes in Advisor prompts ✅
 27. Proactive `/brief` after pre-market run (`PROACTIVE_BRIEF_*`) ✅
 28. `advisor_on_demand.py`, `advisor_scan.py` — ad-hoc tickers + indicator scans ✅
-29. Install scripts `deploy/install-pia-bot-macos.sh` / `install-pia-bot-linux.sh` ✅ (service bootstrap deferred until operator runs script)
-30. Manual smoke tests — Phase 3 checklist ✅ (2026-06-03; `pia-bot` launchd/systemd install still operator step)
+29. `fundamentals_tool.py` — on-demand trailing/forward P/E and PEG in Advisor prompts ✅
+30. Install scripts `deploy/install-pia-bot-macos.sh` / `install-pia-bot-linux.sh` ✅ (service bootstrap deferred until operator runs script)
+31. Manual smoke tests — Phase 3 checklist ✅ (2026-06-03; `pia-bot` launchd/systemd install still operator step)
 
 **Phase 4 — Web application (browser UI)**
 
