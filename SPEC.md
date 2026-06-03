@@ -24,7 +24,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 | **1** | Monitor pipeline (LangGraph, signals, notifications) | ✅ Complete |
 | **Deployment** | `pia-run` timers, `pia-console`, deploy templates | ✅ Templates ready — install when project is complete |
 | **2** | Advisor mode (CLI, Telegram, reasoning, fresh news, useful links) | ✅ Complete |
-| **3** | Production Advisor (persisted memory, proactive brief, live quotes, `pia-bot` install) | Planned |
+| **3** | Production Advisor (persisted memory, proactive brief, live quotes, scans, `pia-bot` install scripts) | ✅ Complete |
 | **4** | Browser web app (dashboard + advisor chat) | Planned |
 
 ---
@@ -54,12 +54,13 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 
 - Provide a simple way to stop the advisor daemon gracefully at any time (`/stop`)
 
-**Phase 3 (planned)**
+**Phase 3 (complete)**
 
-- Remember conversation context across Advisor restarts
-- Deliver a proactive morning brief after the pre-market Monitor run
+- Remember conversation context across Advisor restarts (`data/advisor/history.json`, `/clear`)
+- Deliver a proactive morning brief after the pre-market Monitor run (`PROACTIVE_BRIEF_*` flags)
 - Fetch live quotes on demand when answering Advisor questions
-- Run `pia-bot` as an installed system service
+- Ad-hoc ticker analysis and indicator scans for symbols/comparisons outside the watchlist
+- Install scripts for `pia-bot` (`deploy/install-pia-bot-macos.sh`, `deploy/install-pia-bot-linux.sh`) — run after local validation
 
 **Phase 4 (planned)**
 
@@ -635,7 +636,7 @@ The following Advisor capabilities shipped with Phase 2 and are **not** deferred
 - **Useful links** — headline URLs plus Yahoo Finance quote and Google News search links appended to every Advisor reply
 - **Session disclaimer** — financial-advice disclaimer shown once per CLI session or Telegram `/start`, not on every message
 
-Phase 3 adds **persisted** memory, **proactive** brief delivery, **live quotes**, and **production deployment** of the Advisor daemon.
+Phase 3 adds **persisted** memory, **proactive** brief delivery, **live quotes**, **ad-hoc/scanned** market analysis, and **production deployment scripts** for the Advisor daemon.
 
 ---
 
@@ -1117,11 +1118,13 @@ PIA_WEB_TOKEN=
 
 **Phase 3 — Advisor production & live data**
 
-- [ ] Conversation history survives `pia-advisor` and `pia-bot` restarts
-- [ ] Pre-market run triggers proactive `/brief` when `PROACTIVE_BRIEF_ENABLED=true`
-- [ ] Advisor `/ask` includes live quote snapshot for mentioned tickers (price, change %, as-of)
-- [ ] `pia-bot` installed and running via launchd (macOS) or systemd (Linux)
-- [ ] Proactive brief does not duplicate the standard Monitor notification when both are enabled
+- [x] Conversation history survives `pia-advisor` and `pia-bot` restarts
+- [x] Pre-market run triggers proactive `/brief` when `PROACTIVE_BRIEF_ENABLED=true` (hook in `run_once.py`; live dispatch requires Telegram/email configured)
+- [x] Advisor `/ask` includes live quote snapshot for mentioned tickers (price, change %, as-of)
+- [ ] `pia-bot` installed and running via launchd (macOS) or systemd (Linux) — install scripts ready; run `./deploy/install-pia-bot-macos.sh` when validated
+- [x] Proactive brief does not duplicate the standard Monitor notification when `PROACTIVE_BRIEF_SKIP_IF_NOTIFY=true`
+- [x] Ad-hoc ticker analysis for symbols not on the watchlist (`ADVISOR_ADHOC_ANALYSIS`)
+- [x] Indicator scan for comparative questions (`ADVISOR_SCAN_*`, `data/advisor_scan_universe.yaml`)
 
 **Phase 4 — Web application**
 
@@ -1337,14 +1340,15 @@ Browser  ←HTTP→  pia-web (FastAPI or Starlette)
 22. Deploy templates for `pia-bot` (launchd + systemd) — install deferred to Phase 3
 23. Manual smoke tests — Advisor checklist
 
-**Phase 3 — Advisor production & live data**
+**Phase 3 — Advisor production & live data** ✅
 
-24. `advisor_history.py` — persisted conversation across restarts
-25. `/clear` command; wire history into CLI and Telegram
-26. `quote_tool.py` — on-demand live quotes in Advisor prompts
-27. Proactive `/brief` after pre-market run (`PROACTIVE_BRIEF_ENABLED`)
-28. **Install** `pia-bot` launchd/systemd service (production Advisor daemon)
-29. Manual smoke tests — Phase 3 checklist
+24. `advisor_history.py` — persisted conversation across restarts ✅
+25. `/clear` command; wire history into CLI and Telegram ✅
+26. `quote_tool.py` — on-demand live quotes in Advisor prompts ✅
+27. Proactive `/brief` after pre-market run (`PROACTIVE_BRIEF_*`) ✅
+28. `advisor_on_demand.py`, `advisor_scan.py` — ad-hoc tickers + indicator scans ✅
+29. Install scripts `deploy/install-pia-bot-macos.sh` / `install-pia-bot-linux.sh` ✅ (service bootstrap deferred until operator runs script)
+30. Manual smoke tests — Phase 3 checklist ✅ (2026-06-03; `pia-bot` launchd/systemd install still operator step)
 
 **Phase 4 — Web application (browser UI)**
 

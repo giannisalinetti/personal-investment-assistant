@@ -8,5 +8,6 @@ build/
 .DS_Store
 .cache/
 data/state.json
+data/advisor/history.json
 logs/*.log
 !logs/.gitkeep

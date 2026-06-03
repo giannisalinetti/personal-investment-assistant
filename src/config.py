@@ -75,10 +75,30 @@ class Settings(BaseSettings):
     ADVISOR_STALE_STATE_HOURS: float = 2.0
     ADVISOR_NEWS_WINDOW_HOURS: int = 168
     ADVISOR_NEWS_HEADLINES_PER_TICKER: int = 8
+    ADVISOR_HISTORY_MAX_TURNS: int = 20
+    ADVISOR_FETCH_QUOTES: bool = True
+    ADVISOR_ADHOC_ANALYSIS: bool = True
+    ADVISOR_ADHOC_MAX_TICKERS: int = 3
+    ADVISOR_SCAN_ENABLED: bool = True
+    ADVISOR_SCAN_MAX_TICKERS: int = 150
+    ADVISOR_SCAN_CONCURRENCY: int = 12
+    ADVISOR_SCAN_UNIVERSE_PATH: str = "data/advisor_scan_universe.yaml"
+    PROACTIVE_BRIEF_ENABLED: bool = False
+    PROACTIVE_BRIEF_VIA: str = "telegram"
+    PROACTIVE_BRIEF_SKIP_IF_NOTIFY: bool = False
 
     @property
     def rss_feed_list(self) -> list[str]:
         return [feed.strip() for feed in self.RSS_FEEDS.split(",") if feed.strip()]
+
+    @property
+    def proactive_brief_channels(self) -> set[str]:
+        value = self.PROACTIVE_BRIEF_VIA.strip().lower()
+        if value == "both":
+            return {"telegram", "email"}
+        if value in {"telegram", "email"}:
+            return {value}
+        return set()
 
 
 def load_watchlist(path: Path | None = None) -> list[WatchlistEntry]:

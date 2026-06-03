@@ -9,6 +9,7 @@ import sys
 from rich.console import Console
 from rich.table import Table
 
+from src.cli import command_parser
 from src.config import load_watchlist, settings
 from src.graph import graph
 from src.logging_config import configure_logging
@@ -122,7 +123,22 @@ async def run_graph(*, run_type: str = "manual") -> dict:
     return await invoke_graph(run_type=run_type)
 
 
+def _parse_args() -> None:
+    parser = command_parser(
+        "pia-graph",
+        "Run the Monitor LangGraph pipeline with Rich output and persist state.json.",
+        epilog=(
+            "Manual development entry point for the full Monitor pipeline "
+            "(supervisor → market data → news → analyst → notifier).\n\n"
+            "Example:\n"
+            "  uv run pia-graph"
+        ),
+    )
+    parser.parse_args()
+
+
 def main() -> None:
+    _parse_args()
     final_state = asyncio.run(run_graph())
     state_path = persist_state(final_state)
     console.print(f"\n[dim]State persisted to {state_path}[/dim]")

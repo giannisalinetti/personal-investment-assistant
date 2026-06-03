@@ -9,10 +9,23 @@ import re
 
 from urllib.parse import quote
 
+from src.advisor_on_demand import (
+    analyze_adhoc_tickers,
+    build_adhoc_entries,
+    format_on_demand_block,
+)
+from src.advisor_scan import (
+    IndicatorScanResult,
+    format_scan_block,
+    run_indicator_scan,
+    scan_status_message,
+)
 from src.config import WatchlistEntry, settings
+from src.tools.ticker_extract import extract_adhoc_tickers
 from src.llm import get_advisor_llm
 from src.state_persistence import stale_state_warning
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
+from src.tools.quote_tool import fetch_quotes
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +49,7 @@ def fresh_news_targets(
     watchlist: list[WatchlistEntry],
     mode: str,
 ) -> list[WatchlistEntry]:
-    """Return watchlist entries to fetch live headlines for."""
+    """Return watchlist entries to fetch live headlines for (sync subset)."""
     if mode == "brief":
         return watchlist
 
@@ -44,9 +57,64 @@ def fresh_news_targets(
     if mentioned:
         return mentioned
 
+    adhoc = extract_adhoc_tickers(question, watchlist)[: settings.ADVISOR_ADHOC_MAX_TICKERS]
+    if adhoc:
+        return [WatchlistEntry(ticker=ticker, name=ticker) for ticker in adhoc]
+
     if _RECENT_NEWS_HINTS.search(question):
         return watchlist
     return []
+
+
+def _dedupe_entries(entries: list[WatchlistEntry]) -> list[WatchlistEntry]:
+    seen: set[str] = set()
+    unique: list[WatchlistEntry] = []
+    for entry in entries:
+        key = entry.ticker.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(entry)
+    return unique
+
+
+async def _maybe_analyze_explicit_tickers(
+    question: str,
+    watchlist: list[WatchlistEntry],
+) -> tuple[list[WatchlistEntry], dict | None]:
+    explicit = extract_adhoc_tickers(question, watchlist)[: settings.ADVISOR_ADHOC_MAX_TICKERS]
+    if not explicit:
+        return [], None
+    entries = await build_adhoc_entries(explicit)
+    analysis = await analyze_adhoc_tickers(entries)
+    return entries, analysis
+
+
+async def resolve_advisor_targets(
+    *,
+    question: str,
+    watchlist: list[WatchlistEntry],
+    mode: str,
+) -> tuple[list[WatchlistEntry], dict | None, IndicatorScanResult | None]:
+    """Resolve headline/quote targets, on-demand analysis, and indicator scans."""
+    if mode == "brief":
+        return watchlist, None, None
+
+    watchlist_mentioned = _entries_mentioned_in_text(question, watchlist)
+    scan, explicit_result = await asyncio.gather(
+        run_indicator_scan(question, watchlist),
+        _maybe_analyze_explicit_tickers(question, watchlist),
+    )
+    explicit_entries, on_demand = explicit_result
+
+    if watchlist_mentioned or explicit_entries:
+        query_entries = _dedupe_entries(watchlist_mentioned + explicit_entries)
+    elif _RECENT_NEWS_HINTS.search(question):
+        query_entries = watchlist
+    else:
+        query_entries = []
+
+    return query_entries, on_demand, scan
 
 
 def _format_watchlist_block(entries: list[WatchlistEntry]) -> str:
@@ -109,6 +177,37 @@ def _format_fresh_headlines_block(headlines_by_ticker: dict[str, list[dict]]) ->
             meta = " — ".join(part for part in (published, source) if part)
             lines.append(f"  {index}. {title}" + (f" ({meta})" if meta else ""))
     return "\n".join(lines)
+
+
+def _format_live_quotes_block(quotes_by_ticker: dict[str, dict]) -> str:
+    if not quotes_by_ticker:
+        return "No live quotes fetched."
+
+    lines = ["(yfinance — fetched on demand, not from the last Monitor run)"]
+    for ticker, quote in quotes_by_ticker.items():
+        price = quote.get("price")
+        change_pct = quote.get("change_pct")
+        currency = quote.get("currency", "")
+        as_of = quote.get("as_of", "")
+        if price is None:
+            lines.append(f"- {ticker}: unavailable")
+            continue
+        change_text = f", {change_pct:+.2f}% vs prior close" if change_pct is not None else ""
+        volume = quote.get("volume")
+        volume_text = f", vol {volume:,}" if volume is not None else ""
+        lines.append(
+            f"- {ticker}: {price:.2f} {currency}{change_text}{volume_text} (as of {as_of})"
+        )
+    return "\n".join(lines)
+
+
+async def _fetch_live_quotes(entries: list[WatchlistEntry]) -> tuple[dict[str, dict], list[str]]:
+    if not settings.ADVISOR_FETCH_QUOTES or not entries:
+        return {}, []
+    tickers = [entry.ticker for entry in entries]
+    quotes, errors = await fetch_quotes(tickers)
+    logger.info("Advisor live quotes: %s", list(quotes))
+    return quotes, errors
 
 
 def _yahoo_finance_url(ticker: str) -> str:
@@ -217,14 +316,20 @@ def _build_prompt(
     history: list[dict],
     mode: str,
     fresh_headlines: dict[str, list[dict]],
+    live_quotes: dict[str, dict],
+    on_demand: dict | None,
+    scan: IndicatorScanResult | None,
 ) -> str:
     system = (
         "You are a personal investment advisor assistant. You help the user think through "
-        "watchlist decisions — you never execute trades and have no portfolio access.\n"
+        "investment decisions — you never execute trades and have no portfolio access.\n"
         "Rules:\n"
-        "- Ground answers in Monitor data AND the Fresh headlines section when explaining recent moves\n"
+        "- Latest Monitor run covers the configured watchlist only\n"
+        "- Indicator scan results include a pre-computed exact_leader — always state that ticker and value\n"
+        "- On-demand analysis covers explicitly mentioned tickers outside the watchlist\n"
+        "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Live quotes, and Fresh headlines\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
-        "- Do not invent prices, headlines, or scores not present in the context\n"
+        "- Do not invent prices, RSI values, or headlines not present in the context\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
         "- Reason step-by-step internally, then respond with clear prose only"
@@ -237,6 +342,15 @@ def _build_prompt(
         "",
         "=== Latest Monitor run ===",
         _format_state_block(state),
+        "",
+        "=== Indicator scan (computed) ===",
+        format_scan_block(scan),
+        "",
+        "=== On-demand analysis (explicit tickers) ===",
+        format_on_demand_block(on_demand),
+        "",
+        "=== Live quotes ===",
+        _format_live_quotes_block(live_quotes),
         "",
         "=== Fresh headlines (live RSS) ===",
         _format_fresh_headlines_block(fresh_headlines),
@@ -269,6 +383,7 @@ async def advisor_respond(
     watchlist: list[WatchlistEntry],
     history: list[dict] | None = None,
     mode: str = "ask",
+    resolved: tuple[list[WatchlistEntry], dict | None, IndicatorScanResult | None] | None = None,
 ) -> str:
     """Single entry point for Advisor LLM calls."""
     history = history or []
@@ -276,9 +391,18 @@ async def advisor_respond(
     if state is None:
         return warning or "Monitor state unavailable."
 
-    entries = fresh_news_targets(question=question, watchlist=watchlist, mode=mode)
+    if resolved is None:
+        entries, on_demand, scan = await resolve_advisor_targets(
+            question=question,
+            watchlist=watchlist,
+            mode=mode,
+        )
+    else:
+        entries, on_demand, scan = resolved
     fresh_headlines, fetch_errors = await _fetch_fresh_headlines(entries)
     link_entries = entries or _entries_mentioned_in_text(question, watchlist)
+    quote_entries = link_entries if settings.ADVISOR_FETCH_QUOTES else []
+    live_quotes, quote_errors = await _fetch_live_quotes(quote_entries)
 
     prompt = _build_prompt(
         question=question,
@@ -287,11 +411,16 @@ async def advisor_respond(
         history=history,
         mode=mode,
         fresh_headlines=fresh_headlines,
+        live_quotes=live_quotes,
+        on_demand=on_demand,
+        scan=scan,
     )
     logger.info(
-        "Advisor invoke mode=%s tickers_fetched=%s prompt_chars=%d",
+        "Advisor invoke mode=%s tickers_fetched=%s adhoc=%s scan=%s prompt_chars=%d",
         mode,
         list(fresh_headlines),
+        on_demand.get("tickers") if on_demand else [],
+        scan.leader.ticker if scan else None,
         len(prompt),
     )
     try:
@@ -305,6 +434,21 @@ async def advisor_respond(
         prefix_parts.append(f"⚠️ {warning}")
     if fetch_errors:
         prefix_parts.append("⚠️ Some headline feeds failed: " + "; ".join(fetch_errors[:3]))
+    if quote_errors:
+        prefix_parts.append("⚠️ Some quote fetches failed: " + "; ".join(quote_errors[:3]))
+    if on_demand and on_demand.get("signals"):
+        tickers = ", ".join(on_demand["tickers"])
+        prefix_parts.append(f"ℹ️ On-demand analysis fetched for {tickers}.")
+    if on_demand and on_demand.get("errors"):
+        prefix_parts.append(
+            "⚠️ On-demand analysis errors: " + "; ".join(on_demand["errors"][:3])
+        )
+    if scan:
+        prefix_parts.append(
+            f"ℹ️ Indicator scan complete — {scan.leader.ticker} has the "
+            f"{'highest' if scan.direction == 'highest' else 'lowest'} "
+            f"{scan.metric_label} ({scan.leader.value:.1f}) in scan universe."
+        )
     if entries and not any(fresh_headlines.values()):
         prefix_parts.append(
             f"⚠️ No headlines found in the last {settings.ADVISOR_NEWS_WINDOW_HOURS}h "
@@ -313,6 +457,9 @@ async def advisor_respond(
 
     if prefix_parts:
         answer = "\n\n".join(prefix_parts) + "\n\n" + answer
+
+    if scan:
+        answer = f"{answer.rstrip()}\n\n---\n\n{scan.exact_answer_block()}"
 
     links = format_useful_links_section(fresh_headlines=fresh_headlines, entries=link_entries)
     if links:

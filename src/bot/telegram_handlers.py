@@ -7,8 +7,10 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from src.advisor_history import append_exchange, clear_history, load_turns
 from src.config import load_watchlist, settings
-from src.nodes.advisor import advisor_respond, fresh_news_targets
+from src.advisor_scan import scan_status_message
+from src.nodes.advisor import advisor_respond, resolve_advisor_targets
 from src.nodes.notifier import DISCLAIMER
 from src.state_persistence import NEXT_RUNS, load_state, stale_state_warning
 from src.tools.telegram_client import telegram_configured
@@ -16,7 +18,6 @@ from src.tools.telegram_client import telegram_configured
 logger = logging.getLogger(__name__)
 
 _TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-_CONVERSATION_KEY = "advisor_history"
 _DISCLAIMER_SHOWN_KEY = "disclaimer_shown"
 
 
@@ -30,9 +31,13 @@ def _authorized(update: Update) -> bool:
 
 
 def _history(context: ContextTypes.DEFAULT_TYPE) -> list[dict]:
-    if _CONVERSATION_KEY not in context.application.bot_data:
-        context.application.bot_data[_CONVERSATION_KEY] = []
-    return context.application.bot_data[_CONVERSATION_KEY]
+    return load_turns()
+
+
+def _chat_id(update: Update) -> str | None:
+    if update.effective_chat is None:
+        return None
+    return str(update.effective_chat.id)
 
 
 def _truncate(text: str, limit: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> str:
@@ -50,14 +55,22 @@ async def _reply_advisor(
 ) -> None:
     if update.message is None:
         return
-    targets = fresh_news_targets(question=question, watchlist=load_watchlist(), mode=mode)
-    status = (
-        f"🧠 Fetching headlines for {', '.join(e.ticker for e in targets)}…"
-        if targets
-        else "🧠 Thinking… this may take a few minutes."
-    )
-    await update.message.reply_text(status)
     watchlist = load_watchlist()
+    targets, on_demand, scan = await resolve_advisor_targets(
+        question=question,
+        watchlist=watchlist,
+        mode=mode,
+    )
+    if scan_message := scan_status_message(scan):
+        status = f"📊 {scan_message.capitalize()}…"
+    elif on_demand and on_demand.get("tickers"):
+        tickers = ", ".join(on_demand["tickers"])
+        status = f"📊 On-demand analysis for {tickers}…"
+    elif targets:
+        status = f"🧠 Fetching headlines for {', '.join(e.ticker for e in targets)}…"
+    else:
+        status = "🧠 Thinking… this may take a few minutes."
+    await update.message.reply_text(status)
     state = load_state()
     history = _history(context)
     answer = await advisor_respond(
@@ -66,12 +79,14 @@ async def _reply_advisor(
         watchlist=watchlist,
         history=history,
         mode=mode,
+        resolved=(targets, on_demand, scan),
     )
-    if mode == "ask" and question:
-        history.append({"role": "user", "content": question})
-    elif mode == "brief":
-        history.append({"role": "user", "content": "/brief"})
-    history.append({"role": "assistant", "content": answer})
+    user_label = question if mode == "ask" and question else "/brief"
+    append_exchange(
+        user=user_label,
+        assistant=answer,
+        telegram_chat_id=_chat_id(update),
+    )
     await update.message.reply_text(_truncate(answer), disable_web_page_preview=True)
 
 
@@ -120,6 +135,15 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(msg)
 
 
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    if update.message is None:
+        return
+    clear_history(telegram_chat_id=_chat_id(update))
+    await update.message.reply_text("Conversation history cleared.")
+
+
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         return
@@ -141,6 +165,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         f"{DISCLAIMER}\n\n"
         "Personal Investment Assistant advisor is running.\n"
-        "Commands: /brief  /ask <question>  /status  /stop"
+        "Commands: /brief  /ask <question>  /clear  /status  /stop"
     )
     context.application.bot_data[_DISCLAIMER_SHOWN_KEY] = True

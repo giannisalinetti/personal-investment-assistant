@@ -7,7 +7,9 @@ import asyncio
 import logging
 import sys
 
+from src.cli import command_parser
 from src.logging_config import configure_logging
+from src.proactive_brief import maybe_send_proactive_brief
 from src.run_graph import invoke_graph
 from src.state_persistence import persist_state
 
@@ -18,7 +20,17 @@ VALID_RUN_TYPES = ("pre_market", "midday", "end_of_day", "manual")
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the PIA pipeline once and persist state.")
+    parser = command_parser(
+        "pia-run",
+        "Run the Monitor pipeline once, persist state.json, and exit.",
+        epilog=(
+            "Used by launchd/systemd timers for scheduled Monitor runs. "
+            "May send a proactive Advisor brief after pre_market when enabled.\n\n"
+            "Examples:\n"
+            "  uv run pia-run --run-type pre_market\n"
+            "  uv run pia-run --run-type manual"
+        ),
+    )
     parser.add_argument(
         "--run-type",
         choices=VALID_RUN_TYPES,
@@ -33,6 +45,7 @@ async def run_once(*, run_type: str) -> int:
     try:
         final_state = await invoke_graph(run_type=run_type)
         persist_state(final_state)
+        await maybe_send_proactive_brief(final_state)
         if final_state.get("errors"):
             logger.warning("Run finished with %d non-fatal errors", len(final_state["errors"]))
         return 0

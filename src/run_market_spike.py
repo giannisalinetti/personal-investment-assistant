@@ -9,6 +9,7 @@ import sys
 from rich.console import Console
 from rich.table import Table
 
+from src.cli import command_parser
 from src.config import load_watchlist, settings
 from src.logging_config import configure_logging
 from src.nodes.analyst import analyst_node
@@ -78,7 +79,21 @@ async def run_spike() -> int:
     return 0
 
 
+def _parse_args() -> None:
+    parser = command_parser(
+        "pia-spike",
+        "Development spike — watchlist → market data → technical signals only.",
+        epilog=(
+            "Skips news, discovery, and notifier nodes. Useful for quick market-data checks.\n\n"
+            "Example:\n"
+            "  uv run pia-spike"
+        ),
+    )
+    parser.parse_args()
+
+
 def main() -> None:
+    _parse_args()
     exit_code = asyncio.run(run_spike())
     sys.exit(exit_code)
 

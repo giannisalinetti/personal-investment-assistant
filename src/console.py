@@ -13,6 +13,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
+from src.cli import command_parser
 from src.config import settings
 from src.nodes.notifier import format_suggestion_line
 from src.state_persistence import load_state, state_age_hours
@@ -131,7 +132,22 @@ def _wait_for_quit(stop_event: threading.Event) -> None:
             stop_event.set()
 
 
+def _parse_args() -> None:
+    parser = command_parser(
+        "pia-console",
+        "Rich terminal dashboard — read-only view of data/state.json.",
+        epilog=(
+            "Refreshes every 10 seconds. Type q + Enter to quit.\n"
+            "Monitor scheduled runs continue independently.\n\n"
+            "Example:\n"
+            "  uv run pia-console"
+        ),
+    )
+    parser.parse_args()
+
+
 def main() -> None:
+    _parse_args()
     console = Console()
     stop_event = threading.Event()
     threading.Thread(target=_wait_for_quit, args=(stop_event,), daemon=True).start()
