@@ -8,14 +8,16 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from src.config import load_watchlist, settings
-from src.nodes.advisor import advisor_respond
+from src.nodes.advisor import advisor_respond, fresh_news_targets
+from src.nodes.notifier import DISCLAIMER
 from src.state_persistence import NEXT_RUNS, load_state, stale_state_warning
 from src.tools.telegram_client import telegram_configured
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+_TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _CONVERSATION_KEY = "advisor_history"
+_DISCLAIMER_SHOWN_KEY = "disclaimer_shown"
 
 
 def _authorized(update: Update) -> bool:
@@ -33,7 +35,7 @@ def _history(context: ContextTypes.DEFAULT_TYPE) -> list[dict]:
     return context.application.bot_data[_CONVERSATION_KEY]
 
 
-def _truncate(text: str, limit: int = TELEGRAM_MAX_MESSAGE_LENGTH) -> str:
+def _truncate(text: str, limit: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 20] + "\n\n… [truncated]"
@@ -48,7 +50,13 @@ async def _reply_advisor(
 ) -> None:
     if update.message is None:
         return
-    await update.message.reply_text("🧠 Thinking… this may take a few minutes.")
+    targets = fresh_news_targets(question=question, watchlist=load_watchlist(), mode=mode)
+    status = (
+        f"🧠 Fetching headlines for {', '.join(e.ticker for e in targets)}…"
+        if targets
+        else "🧠 Thinking… this may take a few minutes."
+    )
+    await update.message.reply_text(status)
     watchlist = load_watchlist()
     state = load_state()
     history = _history(context)
@@ -131,6 +139,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Telegram is not fully configured in .env")
         return
     await update.message.reply_text(
+        f"{DISCLAIMER}\n\n"
         "Personal Investment Assistant advisor is running.\n"
         "Commands: /brief  /ask <question>  /status  /stop"
     )
+    context.application.bot_data[_DISCLAIMER_SHOWN_KEY] = True

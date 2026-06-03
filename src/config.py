@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_TO_CONSOLE: bool = False
     ADVISOR_STALE_STATE_HOURS: float = 2.0
+    ADVISOR_NEWS_WINDOW_HOURS: int = 168
+    ADVISOR_NEWS_HEADLINES_PER_TICKER: int = 8
 
     @property
     def rss_feed_list(self) -> list[str]:

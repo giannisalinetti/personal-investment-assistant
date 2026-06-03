@@ -10,7 +10,8 @@ from rich.console import Console
 
 from src.config import load_watchlist
 from src.logging_config import configure_logging
-from src.nodes.advisor import advisor_respond
+from src.nodes.advisor import advisor_respond, fresh_news_targets
+from src.nodes.notifier import DISCLAIMER
 from src.state_persistence import load_state
 
 configure_logging()
@@ -23,8 +24,13 @@ async def _repl() -> None:
     history: list[dict] = []
 
     console.print("[bold]Personal Investment Assistant — Advisor[/bold]")
+    console.print(DISCLAIMER)
+    console.print()
     console.print("Commands: [cyan]brief[/cyan]  [cyan]quit[/cyan]  or type a question")
-    console.print("[dim]Uses latest data/state.json from Monitor runs. Reasoning ON — expect 30s–3min.[/dim]\n")
+    console.print(
+        "[dim]Uses data/state.json plus live Google News RSS for mentioned tickers. "
+        "Reasoning ON — expect 30s–3min.[/dim]\n"
+    )
 
     while True:
         try:
@@ -45,7 +51,12 @@ async def _repl() -> None:
             question = user_input
 
         state = load_state()
-        console.print("[dim]Thinking…[/dim]")
+        targets = fresh_news_targets(question=question, watchlist=watchlist, mode=mode)
+        if targets:
+            tickers = ", ".join(entry.ticker for entry in targets)
+            console.print(f"[dim]Fetching fresh headlines for {tickers}…[/dim]")
+        else:
+            console.print("[dim]Thinking…[/dim]")
         answer = await advisor_respond(
             question=question,
             state=state,

@@ -1,15 +1,18 @@
-"""Advisor node — on-demand reasoning over persisted Monitor state."""
+"""Advisor node — on-demand reasoning over persisted Monitor state + fresh news."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
+
+from urllib.parse import quote
 
 from src.config import WatchlistEntry, settings
 from src.llm import get_advisor_llm
-from src.nodes.notifier import DISCLAIMER
 from src.state_persistence import stale_state_warning
+from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +21,32 @@ BRIEF_PROMPT = """Produce a daily brief for my watchlist covering:
 2. Top 2–3 conflicts or alignments across the watchlist signals
 3. What to watch before the next scheduled Monitor run
 
-Use only facts from the context below. State assumptions explicitly. Be concise but substantive."""
+Use Monitor data and fresh headlines below. Cite specific headlines when explaining recent moves. State assumptions explicitly."""
+
+_RECENT_NEWS_HINTS = re.compile(
+    r"\b(news|headline|announce|recent|today|yesterday|last\s+(few\s+)?days|"
+    r"this\s+week|why|rise|rally|surge|jump|fall|drop|selloff|move|moving)\b",
+    re.IGNORECASE,
+)
+
+
+def fresh_news_targets(
+    *,
+    question: str,
+    watchlist: list[WatchlistEntry],
+    mode: str,
+) -> list[WatchlistEntry]:
+    """Return watchlist entries to fetch live headlines for."""
+    if mode == "brief":
+        return watchlist
+
+    mentioned = _entries_mentioned_in_text(question, watchlist)
+    if mentioned:
+        return mentioned
+
+    if _RECENT_NEWS_HINTS.search(question):
+        return watchlist
+    return []
 
 
 def _format_watchlist_block(entries: list[WatchlistEntry]) -> str:
@@ -44,6 +72,143 @@ def _format_state_block(state: dict) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
+def _entries_mentioned_in_text(text: str, watchlist: list[WatchlistEntry]) -> list[WatchlistEntry]:
+    """Match watchlist tickers or company names mentioned in the user question."""
+    matched: list[WatchlistEntry] = []
+    text_upper = text.upper()
+    text_lower = text.lower()
+    for entry in watchlist:
+        ticker = entry.ticker.upper()
+        base_ticker = ticker.split(".")[0]
+        if (
+            re.search(rf"\b{re.escape(base_ticker)}\b", text_upper)
+            or ticker in text_upper
+            or entry.name.lower() in text_lower
+        ):
+            matched.append(entry)
+    return matched
+
+
+def _format_fresh_headlines_block(headlines_by_ticker: dict[str, list[dict]]) -> str:
+    if not headlines_by_ticker:
+        return "No fresh headlines fetched for this question."
+
+    lines = [
+        f"(Google News RSS, last {settings.ADVISOR_NEWS_WINDOW_HOURS}h — fetched on demand, "
+        "not from the last Monitor run)",
+    ]
+    for ticker, articles in headlines_by_ticker.items():
+        lines.append(f"\n[{ticker}]")
+        if not articles:
+            lines.append("  (no headlines in window)")
+            continue
+        for index, article in enumerate(articles, start=1):
+            title = article.get("title", "").strip()
+            published = article.get("published", "")
+            source = article.get("source", "")
+            meta = " — ".join(part for part in (published, source) if part)
+            lines.append(f"  {index}. {title}" + (f" ({meta})" if meta else ""))
+    return "\n".join(lines)
+
+
+def _yahoo_finance_url(ticker: str) -> str:
+    return f"https://finance.yahoo.com/quote/{ticker}"
+
+
+def _google_news_search_url(ticker: str, company_name: str) -> str:
+    query = quote(f"{ticker} stock")
+    return f"https://news.google.com/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+
+
+def format_useful_links_section(
+    *,
+    fresh_headlines: dict[str, list[dict]],
+    entries: list[WatchlistEntry],
+    max_headline_links: int = 6,
+) -> str | None:
+    """Build a footer with headline URLs and quote/news search links."""
+    if not fresh_headlines and not entries:
+        return None
+
+    lines = ["📎 Useful links"]
+    headline_links: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for ticker, articles in fresh_headlines.items():
+        for article in articles:
+            url = str(article.get("link", "")).strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            title = str(article.get("title", ticker)).strip()
+            if len(title) > 90:
+                title = f"{title[:87]}…"
+            headline_links.append((title, url))
+            if len(headline_links) >= max_headline_links:
+                break
+        if len(headline_links) >= max_headline_links:
+            break
+
+    if headline_links:
+        lines.append("")
+        lines.append("Headlines")
+        for title, url in headline_links:
+            lines.append(f"  • {title}")
+            lines.append(f"    {url}")
+
+    if entries:
+        lines.append("")
+        lines.append("Charts & further reading")
+        for entry in entries:
+            lines.append(f"  • {entry.ticker} quote — {_yahoo_finance_url(entry.ticker)}")
+            lines.append(
+                f"  • {entry.ticker} news — {_google_news_search_url(entry.ticker, entry.name)}"
+            )
+
+    if len(lines) == 1:
+        return None
+    return "\n".join(lines)
+
+
+async def _fetch_fresh_headlines(entries: list[WatchlistEntry]) -> tuple[dict[str, list[dict]], list[str]]:
+    """Fetch live Google News RSS headlines for the given watchlist entries."""
+    if not entries:
+        return {}, []
+
+    headlines_by_ticker: dict[str, list[dict]] = {}
+    errors: list[str] = []
+    window = settings.ADVISOR_NEWS_WINDOW_HOURS
+    limit = settings.ADVISOR_NEWS_HEADLINES_PER_TICKER
+
+    results = await asyncio.gather(
+        *[
+            fetch_ticker_headlines(
+                entry.ticker,
+                entry.name,
+                window_hours=window,
+                limit=limit,
+            )
+            for entry in entries
+        ]
+    )
+
+    for entry, (articles, fetch_errors) in zip(entries, results, strict=True):
+        errors.extend(fetch_errors)
+        relevant = filter_relevant_articles(
+            articles,
+            ticker=entry.ticker,
+            company_name=entry.name,
+        )
+        headlines_by_ticker[entry.ticker] = relevant[:limit]
+        logger.info(
+            "Advisor fresh news: %s — %d headlines",
+            entry.ticker,
+            len(headlines_by_ticker[entry.ticker]),
+        )
+
+    return headlines_by_ticker, errors
+
+
 def _build_prompt(
     *,
     question: str,
@@ -51,12 +216,15 @@ def _build_prompt(
     watchlist: list[WatchlistEntry],
     history: list[dict],
     mode: str,
+    fresh_headlines: dict[str, list[dict]],
 ) -> str:
     system = (
         "You are a personal investment advisor assistant. You help the user think through "
         "watchlist decisions — you never execute trades and have no portfolio access.\n"
         "Rules:\n"
-        "- Use only data provided in the context; do not invent prices, headlines, or scores\n"
+        "- Ground answers in Monitor data AND the Fresh headlines section when explaining recent moves\n"
+        "- Prefer citing specific headlines for 'why did X move' questions\n"
+        "- Do not invent prices, headlines, or scores not present in the context\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
         "- Reason step-by-step internally, then respond with clear prose only"
@@ -69,6 +237,9 @@ def _build_prompt(
         "",
         "=== Latest Monitor run ===",
         _format_state_block(state),
+        "",
+        "=== Fresh headlines (live RSS) ===",
+        _format_fresh_headlines_block(fresh_headlines),
     ]
     if history:
         parts.extend(["", "=== Conversation history ==="])
@@ -91,12 +262,6 @@ def _invoke_advisor_sync(prompt: str) -> str:
     return str(response.content if hasattr(response, "content") else response).strip()
 
 
-def _ensure_disclaimer(text: str) -> str:
-    if DISCLAIMER in text:
-        return text
-    return f"{text.rstrip()}\n\n{DISCLAIMER}"
-
-
 async def advisor_respond(
     *,
     question: str,
@@ -111,20 +276,45 @@ async def advisor_respond(
     if state is None:
         return warning or "Monitor state unavailable."
 
+    entries = fresh_news_targets(question=question, watchlist=watchlist, mode=mode)
+    fresh_headlines, fetch_errors = await _fetch_fresh_headlines(entries)
+    link_entries = entries or _entries_mentioned_in_text(question, watchlist)
+
     prompt = _build_prompt(
         question=question,
         state=state,
         watchlist=watchlist,
         history=history,
         mode=mode,
+        fresh_headlines=fresh_headlines,
     )
-    logger.info("Advisor invoke mode=%s prompt_chars=%d", mode, len(prompt))
+    logger.info(
+        "Advisor invoke mode=%s tickers_fetched=%s prompt_chars=%d",
+        mode,
+        list(fresh_headlines),
+        len(prompt),
+    )
     try:
         answer = await asyncio.to_thread(_invoke_advisor_sync, prompt)
     except Exception as exc:
         logger.exception("Advisor LLM failed: %s", exc)
         return f"Advisor request failed ({exc}). Check Ollama is running."
 
+    prefix_parts: list[str] = []
     if warning:
-        answer = f"⚠️ {warning}\n\n{answer}"
-    return _ensure_disclaimer(answer)
+        prefix_parts.append(f"⚠️ {warning}")
+    if fetch_errors:
+        prefix_parts.append("⚠️ Some headline feeds failed: " + "; ".join(fetch_errors[:3]))
+    if entries and not any(fresh_headlines.values()):
+        prefix_parts.append(
+            f"⚠️ No headlines found in the last {settings.ADVISOR_NEWS_WINDOW_HOURS}h "
+            f"for {', '.join(e.ticker for e in entries)}."
+        )
+
+    if prefix_parts:
+        answer = "\n\n".join(prefix_parts) + "\n\n" + answer
+
+    links = format_useful_links_section(fresh_headlines=fresh_headlines, entries=link_entries)
+    if links:
+        answer = f"{answer.rstrip()}\n\n---\n\n{links}"
+    return answer

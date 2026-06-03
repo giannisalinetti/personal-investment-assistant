@@ -21,7 +21,23 @@ def watchlist_google_news_feed(tickers: list[str]) -> str:
     return f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
 
 
-async def fetch_feed(url: str, *, client: httpx.AsyncClient | None = None) -> list[dict]:
+def ticker_google_news_feed(ticker: str, company_name: str | None = None) -> str:
+    """Build a Google News RSS URL for one ticker (Advisor fresh-news lookup)."""
+    terms = [ticker]
+    if company_name:
+        short_name = company_name.split(" Corp")[0].split(" Inc")[0].strip()
+        if short_name and short_name.lower() not in ticker.lower():
+            terms.append(short_name)
+    query = quote(" OR ".join(terms))
+    return f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+
+
+async def fetch_feed(
+    url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    window_hours: int = NEWS_WINDOW_HOURS,
+) -> list[dict]:
     """Fetch and parse one RSS feed URL."""
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=20.0, follow_redirects=True)
@@ -32,7 +48,7 @@ async def fetch_feed(url: str, *, client: httpx.AsyncClient | None = None) -> li
         articles: list[dict] = []
         for entry in parsed.entries:
             published = _entry_datetime(entry)
-            if published and not _is_within_window(published):
+            if published and not _is_within_window(published, window_hours):
                 continue
             articles.append(
                 {
@@ -49,7 +65,11 @@ async def fetch_feed(url: str, *, client: httpx.AsyncClient | None = None) -> li
             await client.aclose()
 
 
-async def fetch_all_feeds(urls: list[str]) -> tuple[list[dict], list[str]]:
+async def fetch_all_feeds(
+    urls: list[str],
+    *,
+    window_hours: int = NEWS_WINDOW_HOURS,
+) -> tuple[list[dict], list[str]]:
     """Fetch articles from all configured RSS feeds.
 
     Returns (articles, errors). Individual feed failures are non-fatal.
@@ -59,7 +79,7 @@ async def fetch_all_feeds(urls: list[str]) -> tuple[list[dict], list[str]]:
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         for url in urls:
             try:
-                feed_articles = await fetch_feed(url, client=client)
+                feed_articles = await fetch_feed(url, client=client, window_hours=window_hours)
                 articles.extend(feed_articles)
                 logger.info("Fetched %d recent articles from %s", len(feed_articles), url)
             except Exception as exc:
@@ -67,6 +87,24 @@ async def fetch_all_feeds(urls: list[str]) -> tuple[list[dict], list[str]]:
                 logger.warning(message)
                 errors.append(message)
     return articles, errors
+
+
+async def fetch_ticker_headlines(
+    ticker: str,
+    company_name: str,
+    *,
+    window_hours: int,
+    limit: int,
+) -> tuple[list[dict], list[str]]:
+    """Fetch fresh Google News headlines for a single ticker."""
+    url = ticker_google_news_feed(ticker, company_name)
+    try:
+        articles = await fetch_feed(url, window_hours=window_hours)
+        return articles[:limit], []
+    except Exception as exc:
+        message = f"Fresh news fetch failed for {ticker}: {exc}"
+        logger.warning(message)
+        return [], [message]
 
 
 def filter_relevant_articles(
@@ -102,6 +140,6 @@ def _entry_datetime(entry: object) -> datetime | None:
     return None
 
 
-def _is_within_window(published: datetime) -> bool:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=NEWS_WINDOW_HOURS)
+def _is_within_window(published: datetime, window_hours: int) -> bool:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
     return published >= cutoff
