@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PIA{% endblock %} — Personal Investment Assistant</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">PIA</div>
+    <nav>
+      <a href="/{{ token_query }}" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="/advisor{{ token_query }}" class="{% if active == 'advisor' %}active{% endif %}">Advisor</a>
+      <a href="/about{{ token_query }}" class="{% if active == 'about' %}active{% endif %}">About</a>
+    </nav>
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <p class="disclaimer">{{ disclaimer }}</p>
+  </footer>
+  <script src="/static/common.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -12,8 +12,6 @@ from src.tools.telegram_client import send_telegram_message, telegram_configured
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_MAX_LENGTH = 4096
-
 
 def _should_send_proactive_brief(state: AgentState) -> bool:
     if not settings.PROACTIVE_BRIEF_ENABLED:
@@ -36,12 +34,6 @@ def _should_send_proactive_brief(state: AgentState) -> bool:
     return can_send
 
 
-def _truncate(text: str, limit: int = TELEGRAM_MAX_LENGTH) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 20] + "\n\n… [truncated]"
-
-
 async def maybe_send_proactive_brief(state: AgentState) -> None:
     """Generate and dispatch a daily brief when configured for pre-market runs."""
     if not _should_send_proactive_brief(state):
@@ -62,7 +54,7 @@ async def maybe_send_proactive_brief(state: AgentState) -> None:
         return
 
     header = "📋 Proactive daily brief — pre_market\n\n"
-    message = _truncate(f"{header}{brief}")
+    message = f"{header}{brief}"
     via = settings.proactive_brief_channels
     errors: list[str] = []
 

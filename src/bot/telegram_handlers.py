@@ -13,11 +13,10 @@ from src.advisor_scan import scan_status_message
 from src.nodes.advisor import advisor_respond, resolve_advisor_targets
 from src.nodes.notifier import DISCLAIMER
 from src.state_persistence import NEXT_RUNS, load_state, stale_state_warning
-from src.tools.telegram_client import telegram_configured
+from src.tools.telegram_client import reply_telegram_text, telegram_configured
 
 logger = logging.getLogger(__name__)
 
-_TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _DISCLAIMER_SHOWN_KEY = "disclaimer_shown"
 
 
@@ -38,12 +37,6 @@ def _chat_id(update: Update) -> str | None:
     if update.effective_chat is None:
         return None
     return str(update.effective_chat.id)
-
-
-def _truncate(text: str, limit: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 20] + "\n\n… [truncated]"
 
 
 async def _reply_advisor(
@@ -87,7 +80,7 @@ async def _reply_advisor(
         assistant=answer,
         telegram_chat_id=_chat_id(update),
     )
-    await update.message.reply_text(_truncate(answer), disable_web_page_preview=True)
+    await reply_telegram_text(update.message, answer)
 
 
 async def brief_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

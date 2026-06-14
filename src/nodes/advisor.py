@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from urllib.parse import quote
 
@@ -102,11 +103,25 @@ async def resolve_advisor_targets(
         return watchlist, None, None
 
     watchlist_mentioned = _entries_mentioned_in_text(question, watchlist)
-    scan, explicit_result = await asyncio.gather(
-        run_indicator_scan(question, watchlist),
-        _maybe_analyze_explicit_tickers(question, watchlist),
-    )
-    explicit_entries, on_demand = explicit_result
+    scan: IndicatorScanResult | None = None
+    on_demand: dict | None = None
+    explicit_entries: list[WatchlistEntry] = []
+
+    parallel: list[tuple[str, asyncio.Task]] = []
+    if settings.ADVISOR_SCAN_ENABLED:
+        parallel.append(("scan", asyncio.create_task(run_indicator_scan(question, watchlist))))
+    if settings.ADVISOR_ADHOC_ANALYSIS:
+        parallel.append(
+            ("adhoc", asyncio.create_task(_maybe_analyze_explicit_tickers(question, watchlist)))
+        )
+
+    if parallel:
+        results = await asyncio.gather(*(task for _, task in parallel))
+        for (label, _), result in zip(parallel, results, strict=True):
+            if label == "scan":
+                scan = result
+            else:
+                explicit_entries, on_demand = result
 
     if watchlist_mentioned or explicit_entries:
         query_entries = _dedupe_entries(watchlist_mentioned + explicit_entries)
@@ -139,6 +154,37 @@ def _format_state_block(state: dict) -> str:
         "errors": state.get("errors", []),
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _state_for_prompt(
+    state: dict,
+    *,
+    mode: str,
+    question: str,
+    watchlist: list[WatchlistEntry],
+) -> dict:
+    """Trim Monitor state for /ask when the question targets specific tickers."""
+    if mode == "brief":
+        return state
+
+    mentioned = _entries_mentioned_in_text(question, watchlist)
+    if not mentioned:
+        return state
+
+    tickers = {entry.ticker.upper() for entry in mentioned}
+    return {
+        "last_run": state.get("last_run"),
+        "run_type": state.get("run_type"),
+        "skipped": state.get("skipped"),
+        "watchlist_note": state.get("watchlist_note"),
+        "signals": [
+            signal
+            for signal in state.get("signals", [])
+            if str(signal.get("ticker", "")).upper() in tickers
+        ],
+        "suggestions": [],
+        "errors": state.get("errors", []),
+    }
 
 
 def _entries_mentioned_in_text(text: str, watchlist: list[WatchlistEntry]) -> list[WatchlistEntry]:
@@ -395,16 +441,23 @@ def _build_prompt(
         "- Note when P/E or PEG is unavailable (common for ETFs); do not substitute guesses\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
-        "- Reason step-by-step internally, then respond with clear prose only"
+        "- Be concise — lead with the direct answer, then supporting detail"
     )
+    prompt_state = _state_for_prompt(state, mode=mode, question=question, watchlist=watchlist)
+    watchlist_block = watchlist
+    if mode == "ask":
+        mentioned = _entries_mentioned_in_text(question, watchlist)
+        if mentioned:
+            watchlist_block = mentioned
+
     parts = [
         system,
         "",
         "=== Watchlist ===",
-        _format_watchlist_block(watchlist),
+        _format_watchlist_block(watchlist_block),
         "",
         "=== Latest Monitor run ===",
-        _format_state_block(state),
+        _format_state_block(prompt_state),
         "",
         "=== Indicator scan (computed) ===",
         format_scan_block(scan),
@@ -422,8 +475,9 @@ def _build_prompt(
         _format_fresh_headlines_block(fresh_headlines),
     ]
     if history:
+        history_limit = 4 if mode == "ask" else 6
         parts.extend(["", "=== Conversation history ==="])
-        for turn in history[-6:]:
+        for turn in history[-history_limit:]:
             role = turn.get("role", "user")
             content = turn.get("content", "")
             parts.append(f"{role.upper()}: {content}")
@@ -465,10 +519,12 @@ async def advisor_respond(
         )
     else:
         entries, on_demand, scan = resolved
-    fresh_headlines, fetch_errors = await _fetch_fresh_headlines(entries)
     link_entries = entries or _entries_mentioned_in_text(question, watchlist)
     quote_entries = link_entries if settings.ADVISOR_FETCH_QUOTES else []
-    (live_quotes, quote_errors), (valuation, fundamentals_errors) = await asyncio.gather(
+
+    t0 = time.perf_counter()
+    headlines_result, quotes_result, valuation_result = await asyncio.gather(
+        _fetch_fresh_headlines(entries),
         _fetch_live_quotes(quote_entries),
         _fetch_valuation_metrics(
             mode=mode,
@@ -477,6 +533,10 @@ async def advisor_respond(
             entries=entries,
         ),
     )
+    fetch_seconds = time.perf_counter() - t0
+    fresh_headlines, fetch_errors = headlines_result
+    live_quotes, quote_errors = quotes_result
+    valuation, fundamentals_errors = valuation_result
 
     prompt = _build_prompt(
         question=question,
@@ -499,10 +559,21 @@ async def advisor_respond(
         len(prompt),
     )
     try:
+        llm_start = time.perf_counter()
         answer = await asyncio.to_thread(_invoke_advisor_sync, prompt)
+        llm_seconds = time.perf_counter() - llm_start
     except Exception as exc:
         logger.exception("Advisor LLM failed: %s", exc)
         return f"Advisor request failed ({exc}). Check Ollama is running."
+
+    logger.info(
+        "Advisor timing mode=%s fetch=%.1fs llm=%.1fs prompt_chars=%d reasoning=%s",
+        mode,
+        fetch_seconds,
+        llm_seconds,
+        len(prompt),
+        settings.OLLAMA_ADVISOR_REASONING,
+    )
 
     prefix_parts: list[str] = []
     if warning:

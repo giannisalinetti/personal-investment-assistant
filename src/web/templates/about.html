@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}About{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>About</h1>
+  <p>Personal Investment Assistant (PIA) is an advisory-only tool over your watchlist and public market data. It does not execute trades or access your portfolio.</p>
+  <dl class="meta-grid">
+    <dt>LLM model</dt><dd><code>{{ model }}</code></dd>
+    <dt>Watchlist</dt><dd>{{ watchlist_count }} tickers</dd>
+    <dt>Timezone</dt><dd>{{ timezone }}</dd>
+  </dl>
+  <h2>Scheduled Monitor runs</h2>
+  <ul>
+    {% for name, time in next_runs.items() %}
+    <li><strong>{{ name }}</strong> — {{ time }} ({{ timezone }})</li>
+    {% endfor %}
+  </ul>
+  <h2>Interfaces</h2>
+  <ul>
+    <li><strong>Web</strong> — this UI (<code>uv run pia-web</code>)</li>
+    <li><strong>Telegram</strong> — <code>uv run pia-bot</code></li>
+    <li><strong>CLI</strong> — <code>uv run pia-advisor</code>, <code>uv run pia-console</code></li>
+  </ul>
+  {% if auth_required %}
+  <p class="muted">API access requires <code>X-PIA-Token</code> or <code>?token=</code> (see <code>PIA_WEB_TOKEN</code> in .env).</p>
+  {% endif %}
+</section>
+{% endblock %}

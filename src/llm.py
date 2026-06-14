@@ -20,12 +20,12 @@ def get_llm(temperature: float = 0.1) -> ChatOllama:
 
 
 def get_advisor_llm(temperature: float = 0.3) -> ChatOllama:
-    """Advisor mode — reasoning on, larger context for deliberation."""
+    """Advisor mode — optional chain-of-thought; context sized for deliberation."""
     return ChatOllama(
         model=settings.OLLAMA_MODEL,
         base_url=settings.OLLAMA_BASE_URL,
         temperature=temperature,
-        reasoning=True,
+        reasoning=settings.OLLAMA_ADVISOR_REASONING,
         num_ctx=settings.OLLAMA_ADVISOR_NUM_CTX,
         num_predict=settings.OLLAMA_ADVISOR_NUM_PREDICT,
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.bot.telegram_handlers import (
     ask_command,
@@ -31,14 +31,36 @@ def build_application() -> Application:
             "Telegram is not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env"
         )
 
-    application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    application = (
+        Application.builder()
+        .token(settings.TELEGRAM_BOT_TOKEN)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .get_updates_connect_timeout(60.0)
+        .get_updates_read_timeout(90.0)
+        .get_updates_write_timeout(30.0)
+        .get_updates_pool_timeout(30.0)
+        .build()
+    )
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("brief", brief_command))
     application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(CommandHandler("clear", clear_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("stop", stop_command))
+    application.add_error_handler(_log_telegram_error)
     return application
+
+
+async def _log_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log handler failures (common after sleep when the network stack recovers slowly)."""
+    if context.error is not None:
+        logger.exception(
+            "Telegram handler error (update=%s): %s",
+            update,
+            context.error,
+        )
 
 
 def _parse_args() -> None:
@@ -66,7 +88,12 @@ def main() -> None:
         logger.error("%s", exc)
         sys.exit(1)
 
-    application.run_polling(drop_pending_updates=True)
+    # drop_pending_updates avoids a burst of stale commands after wake from sleep
+    application.run_polling(
+        drop_pending_updates=True,
+        bootstrap_retries=-1,
+        close_loop=False,
+    )
     logger.info("Advisor daemon stopped")
     sys.exit(0)
 

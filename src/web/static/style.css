@@ -1,0 +1,285 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a2332;
+  --text: #e7ecf3;
+  --muted: #8b9cb3;
+  --accent: #3d8bfd;
+  --warn: #e6a23c;
+  --buy: #3dd68c;
+  --sell: #f87171;
+  --watch: #fbbf24;
+  --border: #2a3548;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { font-weight: 700; font-size: 1.25rem; color: var(--accent); }
+
+.site-header nav a {
+  color: var(--muted);
+  text-decoration: none;
+  margin-right: 1rem;
+}
+
+.site-header nav a.active,
+.site-header nav a:hover { color: var(--text); }
+
+.content { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.content:has(.advisor-layout) { max-width: 1180px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+}
+
+h1 { margin-top: 0; font-size: 1.5rem; }
+h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+
+.muted { color: var(--muted); }
+.warn { color: var(--warn); }
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  margin: 1rem 0;
+}
+
+.meta-grid dt { color: var(--muted); }
+
+.signals-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.signals-table th,
+.signals-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.4rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.signal-buy { color: var(--buy); }
+.signal-sell { color: var(--sell); }
+.signal-watch { color: var(--watch); }
+
+.suggestions, .errors { padding-left: 1.25rem; }
+
+.btn {
+  background: var(--border);
+  color: var(--text);
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.btn:hover { filter: brightness(1.1); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn-danger { background: #4a2c2c; color: #f5c2c2; }
+
+.advisor-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.advisor-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start; }
+
+.advisor-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 1rem;
+  min-height: 420px;
+}
+
+@media (max-width: 768px) {
+  .advisor-layout { grid-template-columns: 1fr; }
+  .chat-sidebar { max-height: 180px; overflow-y: auto; }
+}
+
+.chat-sidebar {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #121820;
+  padding: 0.75rem;
+  overflow-y: auto;
+}
+
+.sidebar-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.sidebar-empty { margin: 0.5rem 0; font-size: 0.85rem; }
+
+.sidebar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 0.55rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.sidebar-item:hover { background: #243044; }
+.sidebar-item.active {
+  background: #2a3a55;
+  border-left: 3px solid var(--accent);
+  padding-left: calc(0.5rem - 3px);
+}
+
+.chat-main { display: flex; flex-direction: column; min-width: 0; }
+
+.chat-empty, .history-note {
+  margin: 1rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.status-bar {
+  background: #243044;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.chat-thread {
+  flex: 1;
+  min-height: 280px;
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #121820;
+}
+
+.chat-turn { margin-bottom: 1rem; }
+.chat-turn .role {
+  display: inline-block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.chat-user .body { border-left: 3px solid var(--accent); padding-left: 0.75rem; }
+.chat-assistant .body { border-left: 3px solid var(--muted); padding-left: 0.75rem; }
+
+/* Rendered markdown (Advisor replies) */
+.prose { font-size: 0.95rem; line-height: 1.6; }
+.prose :first-child { margin-top: 0; }
+.prose :last-child { margin-bottom: 0; }
+.prose p { margin: 0.65rem 0; }
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  margin: 1rem 0 0.5rem;
+  line-height: 1.25;
+  color: var(--text);
+}
+.prose h1 { font-size: 1.25rem; }
+.prose h2 { font-size: 1.1rem; }
+.prose h3 { font-size: 1rem; }
+.prose ul, .prose ol { margin: 0.5rem 0; padding-left: 1.35rem; }
+.prose li { margin: 0.25rem 0; }
+.prose strong { color: #fff; font-weight: 600; }
+.prose em { color: var(--muted); }
+.prose code {
+  background: #0d1117;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.88em;
+}
+.prose pre {
+  background: #0d1117;
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}
+.prose pre code { background: none; padding: 0; }
+.prose blockquote {
+  margin: 0.75rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+.prose a { color: var(--accent); word-break: break-word; }
+
+.chat-turn .body a { color: var(--accent); }
+
+.ask-form label { display: block; margin-bottom: 0.25rem; color: var(--muted); }
+.ask-form textarea {
+  width: 100%;
+  background: #121820;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font: inherit;
+  resize: vertical;
+}
+
+.ask-form button { margin-top: 0.5rem; }
+
+.site-footer {
+  text-align: center;
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.refresh-note { margin-top: 1rem; font-size: 0.85rem; }
+
+code {
+  background: #121820;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+}

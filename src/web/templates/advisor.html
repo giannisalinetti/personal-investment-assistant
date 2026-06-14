@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Advisor{% endblock %}
+{% block content %}
+<section class="panel advisor-panel">
+  <div class="advisor-header">
+    <div>
+      <h1>Advisor</h1>
+      <p class="muted">Uses <code>data/state.json</code> plus on-demand headlines and quotes. Responses may take 1–3 minutes.</p>
+    </div>
+    <div class="advisor-actions">
+      <button type="button" id="btn-new" class="btn">New chat</button>
+      <button type="button" id="btn-brief" class="btn primary">Daily brief</button>
+      <button type="button" id="btn-clear" class="btn btn-danger">Clear all</button>
+    </div>
+  </div>
+
+  <div class="advisor-layout">
+    <aside class="chat-sidebar" aria-label="Previous chats">
+      <h2 class="sidebar-title">History</h2>
+      <p id="sidebar-empty" class="sidebar-empty muted">No previous chats yet.</p>
+      <ul id="sidebar-list" class="sidebar-list"></ul>
+    </aside>
+
+    <div class="chat-main">
+      <div id="status" class="status-bar" hidden></div>
+
+      <div id="chat" class="chat-thread">
+        <p id="chat-empty" class="chat-empty muted">Ask a question or run a daily brief. Past chats appear in the sidebar.</p>
+      </div>
+
+      <form id="ask-form" class="ask-form">
+        <label for="question">Ask a question</label>
+        <textarea id="question" name="question" rows="3" placeholder="e.g. How does AAPL look vs the last Monitor run?"></textarea>
+        <button type="submit" class="btn primary" id="btn-ask">Send</button>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/advisor.js?v=3"></script>
+{% endblock %}
