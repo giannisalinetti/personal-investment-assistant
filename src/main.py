@@ -18,6 +18,7 @@ from src.bot.telegram_handlers import (
 from src.cli import command_parser
 from src.config import settings
 from src.logging_config import configure_logging
+from src.monitor_scheduler import start_monitor_scheduler, stop_monitor_scheduler
 from src.tools.telegram_client import telegram_configured
 
 configure_logging()
@@ -41,6 +42,8 @@ def build_application() -> Application:
         .get_updates_read_timeout(90.0)
         .get_updates_write_timeout(30.0)
         .get_updates_pool_timeout(30.0)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
         .build()
     )
     application.add_handler(CommandHandler("start", start_command))
@@ -51,6 +54,18 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_error_handler(_log_telegram_error)
     return application
+
+
+async def _post_init(application: Application) -> None:
+    start_monitor_scheduler()
+    logger.info(
+        "pia-bot ready (Monitor scheduler %s)",
+        "on" if settings.PIA_MONITOR_SCHEDULER else "off",
+    )
+
+
+async def _post_shutdown(application: Application) -> None:
+    stop_monitor_scheduler()
 
 
 async def _log_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -69,7 +84,8 @@ def _parse_args() -> None:
         "Long-running Advisor daemon — Telegram polling for /brief, /ask, and related commands.",
         epilog=(
             "Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.\n"
-            "Reads data/state.json from Monitor runs; does not run the Monitor pipeline.\n\n"
+            "With PIA_MONITOR_SCHEDULER=true (default), also runs Monitor at 08:00/13:00/17:30.\n"
+            "Set PIA_MONITOR_SCHEDULER=false when using launchd/K8s CronJobs or Ofelia.\n\n"
             "Telegram commands: /start  /brief  /ask  /clear  /status  /stop\n\n"
             "Example:\n"
             "  uv run pia-bot\n\n"

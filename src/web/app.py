@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -15,9 +16,17 @@ from pydantic import BaseModel, Field
 
 from src.advisor_history import clear_history, load_turns
 from src.cli import command_parser
-from src.config import load_watchlist, settings
+from src.config import load_watchlist, settings, watchlist_counts
 from src.logging_config import configure_logging
+from src.monitor_scheduler import (
+    monitor_busy,
+    monitor_status,
+    start_monitor_scheduler,
+    stop_monitor_scheduler,
+    trigger_monitor_run,
+)
 from src.nodes.notifier import DISCLAIMER
+from src.run_once import VALID_RUN_TYPES
 from src.state_persistence import NEXT_RUNS
 from src.web.advisor_service import stream_advisor
 from src.web.auth import require_web_token
@@ -35,8 +44,26 @@ class AskBody(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
 
 
+class MonitorRunBody(BaseModel):
+    run_type: str = "manual"
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    start_monitor_scheduler()
+    try:
+        yield
+    finally:
+        stop_monitor_scheduler()
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Personal Investment Assistant", docs_url="/api/docs", redoc_url=None)
+    app = FastAPI(
+        title="Personal Investment Assistant",
+        docs_url="/api/docs",
+        redoc_url=None,
+        lifespan=_lifespan,
+    )
     app.state.advisor_lock = asyncio.Lock()
 
     static_dir = WEB_DIR / "static"
@@ -56,6 +83,23 @@ def create_app() -> FastAPI:
     @app.get("/api/state")
     async def api_state() -> JSONResponse:
         return JSONResponse(get_dashboard_view())
+
+    @app.get("/api/monitor/status")
+    async def api_monitor_status() -> JSONResponse:
+        return JSONResponse(monitor_status())
+
+    @app.post("/api/monitor/run")
+    async def api_monitor_run(body: MonitorRunBody | None = None) -> JSONResponse:
+        run_type = (body.run_type if body else "manual").strip().lower() or "manual"
+        if run_type not in VALID_RUN_TYPES:
+            raise HTTPException(status_code=400, detail=f"run_type must be one of {VALID_RUN_TYPES}")
+        if monitor_busy():
+            raise HTTPException(status_code=409, detail="Monitor run already in progress")
+        result = await trigger_monitor_run(run_type=run_type, wait=True)
+        if result.get("status") == "conflict":
+            raise HTTPException(status_code=409, detail=result.get("message", "busy"))
+        status_code = 200 if result.get("status") == "ok" else 500
+        return JSONResponse(result, status_code=status_code)
 
     @app.get("/api/advisor/exchanges")
     async def api_exchanges() -> JSONResponse:
@@ -137,13 +181,31 @@ def create_app() -> FastAPI:
     def _page_context(request: Request, active: str) -> dict:
         token = settings.PIA_WEB_TOKEN.strip()
         token_query = f"?token={token}" if token else ""
+        monitor_p = settings.resolved_monitor_provider()
+        advisor_p = settings.resolved_advisor_provider()
+        if monitor_p == advisor_p == "ollama":
+            model_label = f"ollama/{settings.OLLAMA_MODEL}"
+        elif monitor_p == advisor_p:
+            mid = (
+                settings.ANTHROPIC_MODEL
+                if monitor_p == "anthropic"
+                else settings.OPENAI_MODEL
+                if monitor_p in {"openai", "openai-compatible", "vllm"}
+                else settings.OLLAMA_MODEL
+            )
+            model_label = f"{monitor_p}/{mid}"
+        else:
+            model_label = f"monitor={monitor_p}, advisor={advisor_p}"
         return {
             "request": request,
             "active": active,
             "disclaimer": DISCLAIMER,
-            "model": settings.OLLAMA_MODEL,
+            "model": model_label,
             "auth_required": settings.web_auth_required,
             "token_query": token_query,
+            "monitor_scheduler": settings.PIA_MONITOR_SCHEDULER,
+            "next_runs": NEXT_RUNS,
+            "timezone": settings.TIMEZONE,
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -170,6 +232,7 @@ def create_app() -> FastAPI:
             {
                 **_page_context(request, "about"),
                 "watchlist_count": len(load_watchlist()),
+                "watchlist_counts": watchlist_counts(),
                 "next_runs": NEXT_RUNS,
                 "timezone": settings.TIMEZONE,
             },
@@ -184,7 +247,8 @@ def _parse_args() -> None:
         "Local web UI — Monitor dashboard and Advisor chat.",
         epilog=(
             "Serves on PIA_WEB_HOST:PIA_WEB_PORT (default 127.0.0.1:8765).\n"
-            "Set PIA_WEB_TOKEN to require X-PIA-Token header or ?token= on API calls.\n\n"
+            "Set PIA_WEB_TOKEN to require X-PIA-Token header or ?token= on API calls.\n"
+            "PIA_MONITOR_SCHEDULER=true (default) runs Monitor at 08:00/13:00/17:30.\n\n"
             "Example:\n"
             "  uv run pia-web\n"
             "  open http://127.0.0.1:8765"

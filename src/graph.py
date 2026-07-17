@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
@@ -12,6 +15,7 @@ from src.nodes.news_analyst import news_analyst_node
 from src.nodes.notifier import notifier_node
 from src.nodes.supervisor import supervisor_node
 from src.state import AgentState
+from src.telemetry import start_span
 
 
 def route_after_supervisor(state: AgentState) -> str:
@@ -35,6 +39,19 @@ def fan_out_to_workers(state: AgentState) -> list[Send]:
     ]
 
 
+def _wrap_node(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap an async graph node with an OpenTelemetry span."""
+
+    async def wrapped(state: AgentState) -> dict:
+        with start_span(f"pia.graph.{name}", attributes={"pia.graph.node": name}):
+            result = fn(state)
+            if isinstance(result, Awaitable):
+                return await result
+            return result
+
+    return wrapped
+
+
 def build_graph():
     """Build and compile the Increment 3 pipeline graph.
 
@@ -44,19 +61,16 @@ def build_graph():
 
     Flow (all exchanges closed):
         START → supervisor → END
-
-    The three worker nodes run in parallel. Analyst waits for all three
-    (join barrier) before synthesizing signals.
     """
     builder = StateGraph(AgentState)
 
-    builder.add_node("supervisor", supervisor_node)
+    builder.add_node("supervisor", _wrap_node("supervisor", supervisor_node))
     builder.add_node("dispatch", dispatch_node)
-    builder.add_node("market_data", market_data_node)
-    builder.add_node("news_analyst", news_analyst_node)
-    builder.add_node("discovery", discovery_node)
-    builder.add_node("analyst", analyst_node)
-    builder.add_node("notifier", notifier_node)
+    builder.add_node("market_data", _wrap_node("market_data", market_data_node))
+    builder.add_node("news_analyst", _wrap_node("news_analyst", news_analyst_node))
+    builder.add_node("discovery", _wrap_node("discovery", discovery_node))
+    builder.add_node("analyst", _wrap_node("analyst", analyst_node))
+    builder.add_node("notifier", _wrap_node("notifier", notifier_node))
 
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(
