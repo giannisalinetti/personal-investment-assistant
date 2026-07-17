@@ -41,3 +41,10 @@ def configure_logging() -> None:
 
     for name in NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    try:
+        from src.telemetry import setup_telemetry
+
+        setup_telemetry()
+    except Exception:
+        logging.getLogger(__name__).debug("Telemetry setup skipped", exc_info=True)

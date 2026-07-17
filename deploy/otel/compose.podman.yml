@@ -1,0 +1,23 @@
+# Aspire Dashboard for local OpenTelemetry traces (Podman / Docker Compose)
+#
+# Start:
+#   podman compose -f deploy/otel/compose.podman.yml up -d
+#   # or: docker compose -f deploy/otel/compose.podman.yml up -d
+#
+# UI:  http://localhost:18888
+# OTLP HTTP: http://127.0.0.1:18889  (set in .env as OTEL_EXPORTER_OTLP_ENDPOINT)
+#
+# Then in PIA .env:
+#   PIA_OTEL_ENABLED=true
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:18889
+#   OTEL_SERVICE_NAME=pia
+
+services:
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.0
+    ports:
+      - "18888:18888"
+      - "18889:18889"
+    environment:
+      DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+    restart: unless-stopped
