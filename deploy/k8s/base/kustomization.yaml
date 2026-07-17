@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pia
+resources:
+  - namespace.yaml
+  - configmap-watchlists.yaml
+  - pvc-data.yaml
+  - deployment-pia-web.yaml
+  - deployment-pia-bot.yaml
+  - cronjob-pia-run.yaml
+# Create secrets from secret.example.yaml before apply:
+#   kubectl -n pia create secret generic pia-secrets --from-env-file=...

@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pia-watchlists
+  namespace: pia
+data:
+  stock.yaml: |
+    # Equity stocks watchlist
+    entries:
+      - ticker: AAPL
+        name: Apple Inc.
+        alerts:
+          rsi_oversold: 30
+          rsi_overbought: 70
+      - ticker: MSFT
+        name: Microsoft Corp.
+        alerts:
+          rsi_oversold: 30
+          rsi_overbought: 70
+      - ticker: IBM
+        name: International Business Machines Corp.
+        alerts:
+          rsi_oversold: 30
+          rsi_overbought: 70
+      - ticker: MU
+        name: Micron Technology Inc
+        alerts:
+          rsi_oversold: 30
+          rsi_overbought: 70
+      - ticker: NVDA
+        name: NVIDIA Corp
+        alerts:
+          rsi_oversold: 30
+          rsi_overbought: 70
+  etf.yaml: |
+    # Exchange-traded funds watchlist
+    entries:
+      - ticker: SPY
+        name: S&P 500 ETF
+      - ticker: QQQ
+        name: Nasdaq-100 ETF
+      - ticker: VWCE.DE
+        name: Vanguard FTSE All-World UCITS ETF (USD) Accumulating
+  etc.yaml: |
+    # Exchange-traded commodities (any ETC product)
+    entries:
+      - ticker: 4GLD.DE
+        name: Xetra-Gold ETC
+      - ticker: SLV
+        name: iShares Silver Trust

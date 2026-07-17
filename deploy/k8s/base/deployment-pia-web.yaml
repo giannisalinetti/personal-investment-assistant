@@ -1,0 +1,107 @@
+# Shared env for PIA pods talking to Service DNS name `vllm` (real GPU or stub).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pia-config
+  namespace: pia
+data:
+  PIA_LLM_PROVIDER: "vllm"
+  OPENAI_BASE_URL: "http://vllm:8000/v1"
+  LLM_BASE_URL: "http://vllm:8000/v1"
+  OPENAI_MODEL: "pia-stub"
+  VLLM_MODEL: "pia-stub"
+  PIA_WEB_HOST: "0.0.0.0"
+  PIA_WEB_PORT: "8765"
+  LOG_TO_CONSOLE: "true"
+  TIMEZONE: "Europe/Rome"
+  SKIP_LOW_CONFIDENCE: "true"
+  # CronJobs own the schedule — do not also run APScheduler in Deployments
+  PIA_MONITOR_SCHEDULER: "false"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pia-web
+  namespace: pia
+  labels:
+    app: pia-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pia-web
+  template:
+    metadata:
+      labels:
+        app: pia-web
+    spec:
+      containers:
+        - name: pia-web
+          image: pia:local
+          imagePullPolicy: IfNotPresent
+          command: ["pia-web"]
+          ports:
+            - containerPort: 8765
+              name: http
+          envFrom:
+            - configMapRef:
+                name: pia-config
+            - secretRef:
+                name: pia-secrets
+                optional: true
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pia-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+            - name: watchlists
+              mountPath: /app/watchlists
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pia-data
+        - name: logs
+          persistentVolumeClaim:
+            claimName: pia-logs
+        - name: watchlists
+          configMap:
+            name: pia-watchlists
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pia-web
+  namespace: pia
+spec:
+  selector:
+    app: pia-web
+  ports:
+    - name: http
+      port: 8765
+      targetPort: http

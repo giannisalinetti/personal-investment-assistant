@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pia-config
+  namespace: pia
+data:
+  PIA_LLM_PROVIDER: anthropic
+  OPENAI_BASE_URL: ""
+  LLM_BASE_URL: ""

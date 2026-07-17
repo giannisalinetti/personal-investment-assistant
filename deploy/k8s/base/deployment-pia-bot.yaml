@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pia-bot
+  namespace: pia
+  labels:
+    app: pia-bot
+spec:
+  # Telegram long polling — never scale above 1 without webhook migration
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pia-bot
+  template:
+    metadata:
+      labels:
+        app: pia-bot
+    spec:
+      containers:
+        - name: pia-bot
+          image: pia:local
+          imagePullPolicy: IfNotPresent
+          command: ["pia-bot"]
+          envFrom:
+            - configMapRef:
+                name: pia-config
+            - secretRef:
+                name: pia-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+            - name: watchlists
+              mountPath: /app/watchlists
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pia-data
+        - name: logs
+          persistentVolumeClaim:
+            claimName: pia-logs
+        - name: watchlists
+          configMap:
+            name: pia-watchlists

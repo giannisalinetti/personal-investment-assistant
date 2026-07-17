@@ -1,0 +1,185 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pia-run-pre-market
+  namespace: pia
+spec:
+  schedule: "0 8 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pia-run
+              image: pia:local
+              imagePullPolicy: IfNotPresent
+              command: ["pia-run", "--run-type", "pre_market"]
+              envFrom:
+                - configMapRef:
+                    name: pia-config
+                - secretRef:
+                    name: pia-secrets
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /app/data
+                - name: logs
+                  mountPath: /app/logs
+                - name: watchlists
+                  mountPath: /app/watchlists
+                  readOnly: true
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: pia-data
+            - name: logs
+              persistentVolumeClaim:
+                claimName: pia-logs
+            - name: watchlists
+              configMap:
+                name: pia-watchlists
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pia-run-midday
+  namespace: pia
+spec:
+  schedule: "0 13 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pia-run
+              image: pia:local
+              imagePullPolicy: IfNotPresent
+              command: ["pia-run", "--run-type", "midday"]
+              envFrom:
+                - configMapRef:
+                    name: pia-config
+                - secretRef:
+                    name: pia-secrets
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /app/data
+                - name: logs
+                  mountPath: /app/logs
+                - name: watchlists
+                  mountPath: /app/watchlists
+                  readOnly: true
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: pia-data
+            - name: logs
+              persistentVolumeClaim:
+                claimName: pia-logs
+            - name: watchlists
+              configMap:
+                name: pia-watchlists
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pia-run-end-of-day
+  namespace: pia
+spec:
+  schedule: "30 17 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pia-run
+              image: pia:local
+              imagePullPolicy: IfNotPresent
+              command: ["pia-run", "--run-type", "end_of_day"]
+              envFrom:
+                - configMapRef:
+                    name: pia-config
+                - secretRef:
+                    name: pia-secrets
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /app/data
+                - name: logs
+                  mountPath: /app/logs
+                - name: watchlists
+                  mountPath: /app/watchlists
+                  readOnly: true
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: pia-data
+            - name: logs
+              persistentVolumeClaim:
+                claimName: pia-logs
+            - name: watchlists
+              configMap:
+                name: pia-watchlists
+---
+# Manual / smoke trigger: kubectl create job --from=cronjob/pia-run-manual pia-run-manual-$(date +%s) -n pia
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pia-run-manual
+  namespace: pia
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pia-run
+              image: pia:local
+              imagePullPolicy: IfNotPresent
+              command: ["pia-run", "--run-type", "manual"]
+              envFrom:
+                - configMapRef:
+                    name: pia-config
+                - secretRef:
+                    name: pia-secrets
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /app/data
+                - name: logs
+                  mountPath: /app/logs
+                - name: watchlists
+                  mountPath: /app/watchlists
+                  readOnly: true
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: pia-data
+            - name: logs
+              persistentVolumeClaim:
+                claimName: pia-logs
+            - name: watchlists
+              configMap:
+                name: pia-watchlists
