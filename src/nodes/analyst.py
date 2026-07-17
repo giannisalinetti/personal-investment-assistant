@@ -8,9 +8,14 @@ import logging
 import re
 from statistics import mean
 
-from src.config import settings
+from src.config import AssetClass, settings
 from src.llm import get_llm
 from src.nodes.notifier import _is_notifiable_signal
+from src.skills import (
+    activated_skill_names,
+    format_monitor_skills_block,
+    select_monitor_skills,
+)
 from src.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -27,6 +32,7 @@ def compute_technical_signal(
     bullish: list[str],
     bearish: list[str],
     news_sentiment: float | None = None,
+    asset_class: str = "stock",
 ) -> dict:
     """Compute BUY/SELL/HOLD/WATCH from indicator confirmations."""
     bullish_count = len(bullish)
@@ -71,6 +77,7 @@ def compute_technical_signal(
 
     return {
         "ticker": ticker,
+        "asset_class": asset_class,
         "signal": signal,
         "strength": round(strength, 3),
         "rationale": rationale,
@@ -108,6 +115,15 @@ def _build_watchlist_note(market_data: dict) -> str | None:
     )
 
 
+def _asset_classes_from_signals(signals: list[dict]) -> set[AssetClass]:
+    classes: set[AssetClass] = set()
+    for signal in signals:
+        raw = str(signal.get("asset_class", "stock")).lower().strip()
+        if raw == "stock" or raw == "etf" or raw == "etc":
+            classes.add(raw)
+    return classes or {"stock"}
+
+
 def _polish_language_sync(
     signals: list[dict],
     watchlist_note: str | None,
@@ -122,17 +138,27 @@ def _polish_language_sync(
             f"- {signal['ticker']} ({signal['signal']}, {signal['confidence']}): {signal['rationale']}"
         )
 
+    skills = select_monitor_skills(
+        asset_classes=_asset_classes_from_signals(signals),
+        include_technicals=True,
+        include_news=True,
+    )
+    skills_block = format_monitor_skills_block(skills)
+    if skills:
+        logger.info("Analyst polish skills: %s", activated_skill_names(skills))
+
     prompt_parts = [
         "Rewrite the following investment signal notes for a concise notification.",
         "Keep factual content — do not change BUY/SELL/HOLD/WATCH meaning.",
         "Use short, readable phrases (e.g. 'RSI oversold (28), MACD bullish cross, neutral news').",
+        "Respect asset-class wording from the skills below (e.g. do not lean on P/E for ETFs/ETCs).",
         "Return ONLY JSON with keys:",
         '  "rationales": {"TICKER": "polished text", ...}',
         '  "watchlist_note": "polished one-liner or null"',
-        "",
-        "Signals:",
-        *lines,
     ]
+    if skills_block:
+        prompt_parts.extend(["", skills_block])
+    prompt_parts.extend(["", "Signals:", *lines])
     if watchlist_note:
         prompt_parts.extend(["", f"Watchlist note draft: {watchlist_note}"])
     else:
@@ -177,6 +203,7 @@ async def analyst_node(state: AgentState) -> dict:
             bullish=payload.get("bullish", []),
             bearish=payload.get("bearish", []),
             news_sentiment=_average_sentiment(news_items, ticker),
+            asset_class=str(payload.get("asset_class", "stock")),
         )
         signals.append(signal)
 

@@ -7,8 +7,13 @@ import json
 import logging
 import re
 
-from src.config import WatchlistEntry, load_watchlist, settings
+from src.config import AssetClass, WatchlistEntry, load_watchlist, settings
 from src.llm import get_llm
+from src.skills import (
+    activated_skill_names,
+    format_monitor_skills_block,
+    select_monitor_skills,
+)
 from src.state import AgentState
 from src.tools.news_fetcher import (
     fetch_all_feeds,
@@ -64,14 +69,23 @@ def _score_headlines_batch_sync(
         else:
             lines.append(f'{index}. [{entry.ticker}] Headline: {article["title"]}')
 
+    classes: set[AssetClass] = {entry.asset_class for entry, _ in scored_items}
+    skills = select_monitor_skills(asset_classes=classes, include_news=True)
+    skills_block = format_monitor_skills_block(skills)
+    if skills:
+        logger.info("News analyst skills: %s", activated_skill_names(skills))
+
     llm = get_llm(temperature=0.0)
-    prompt = (
-        f"Score headline sentiment for investors in each bracketed ticker.\n"
+    prompt_parts = [
+        "Score headline sentiment for investors in each bracketed ticker.",
+        "Score company/fund/commodity-relevant news for that ticker; ignore unrelated macro noise when possible.",
         f"Return ONLY a JSON array of {len(scored_items)} numbers from -1.0 (very negative) "
-        f"to +1.0 (very positive), in the same order as the headlines.\n\n"
-        + "\n".join(lines)
-    )
-    response = llm.invoke(prompt)
+        f"to +1.0 (very positive), in the same order as the headlines.",
+    ]
+    if skills_block:
+        prompt_parts.extend(["", skills_block])
+    prompt_parts.extend(["", *lines])
+    response = llm.invoke("\n".join(prompt_parts))
     content = str(response.content if hasattr(response, "content") else response)
     return _parse_sentiment_batch(content, len(scored_items))
 

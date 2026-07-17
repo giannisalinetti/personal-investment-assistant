@@ -21,22 +21,37 @@ from src.advisor_scan import (
     run_indicator_scan,
     scan_status_message,
 )
-from src.config import WatchlistEntry, settings
+from src.config import ASSET_CLASS_LABELS, WatchlistEntry, settings
 from src.tools.ticker_extract import extract_adhoc_tickers
 from src.llm import get_advisor_llm
 from src.state_persistence import stale_state_warning
 from src.tools.fundamentals_tool import fetch_fundamentals_batch
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
 from src.tools.quote_tool import fetch_quotes
+from src.skills import activated_skill_names, format_skills_block, select_skills
+from src.telemetry import start_span
 
 logger = logging.getLogger(__name__)
 
-BRIEF_PROMPT = """Produce a daily brief for my watchlist covering:
-1. Macro themes that matter for MY tickers this week (not generic market commentary)
-2. Top 2–3 conflicts or alignments across the watchlist signals
-3. What to watch before the next scheduled Monitor run
+_CLASS_ORDER = ("stock", "etf", "etc")
 
+BRIEF_PROMPT = """Produce a daily brief for my watchlist.
+
+You MUST structure the reply with these markdown headings, in order:
+## Stocks
+## ETFs
+## ETCs
+## Cross-class themes
+
+Rules for sections:
+- Under each asset-class heading, discuss ONLY that class (signals, headlines, what to watch).
+- If the context says a class is empty / not on the watchlist, omit that heading entirely.
+- Do not mix tickers from different classes inside Stocks / ETFs / ETCs sections.
+- ## Cross-class themes: at most 2–3 short bullets for themes that genuinely span classes; otherwise write "None."
+
+Also cover for each included class: conflicts or alignments in signals, and what to watch before the next Monitor run.
 Use Monitor data and fresh headlines below. Cite specific headlines when explaining recent moves. State assumptions explicitly."""
+
 
 _RECENT_NEWS_HINTS = re.compile(
     r"\b(news|headline|announce|recent|today|yesterday|last\s+(few\s+)?days|"
@@ -137,10 +152,23 @@ def _format_watchlist_block(entries: list[WatchlistEntry]) -> str:
     lines = []
     for entry in entries:
         lines.append(
-            f"- {entry.ticker}: {entry.name} "
+            f"- {entry.ticker}: {entry.name} [{entry.asset_class}] "
             f"(RSI alerts {entry.rsi_oversold:g}/{entry.rsi_overbought:g})"
         )
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else "(empty)"
+
+
+def _format_watchlist_by_class(entries: list[WatchlistEntry]) -> str:
+    """Group watchlist rows by asset class for brief prompts."""
+    parts: list[str] = []
+    for asset_class in _CLASS_ORDER:
+        label = ASSET_CLASS_LABELS.get(asset_class, asset_class)
+        class_entries = [e for e in entries if e.asset_class == asset_class]
+        if not class_entries:
+            parts.append(f"### {label}\n(No {label.lower()} on watchlist — skip this section in the brief.)")
+            continue
+        parts.append(f"### {label}\n{_format_watchlist_block(class_entries)}")
+    return "\n\n".join(parts)
 
 
 def _format_state_block(state: dict) -> str:
@@ -154,6 +182,43 @@ def _format_state_block(state: dict) -> str:
         "errors": state.get("errors", []),
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _format_state_block_by_class(state: dict, watchlist: list[WatchlistEntry]) -> str:
+    """Group Monitor signals by asset_class for brief prompts."""
+    signals = list(state.get("signals", []))
+    ticker_class = {entry.ticker.upper(): entry.asset_class for entry in watchlist}
+    parts: list[str] = [
+        f"last_run: {state.get('last_run')}",
+        f"run_type: {state.get('run_type')}",
+        f"skipped: {state.get('skipped')}",
+        f"watchlist_note: {state.get('watchlist_note')}",
+    ]
+    for asset_class in _CLASS_ORDER:
+        label = ASSET_CLASS_LABELS.get(asset_class, asset_class)
+        class_signals = [
+            s
+            for s in signals
+            if str(s.get("asset_class") or ticker_class.get(str(s.get("ticker", "")).upper(), "stock"))
+            == asset_class
+        ]
+        if not class_signals and not any(e.asset_class == asset_class for e in watchlist):
+            parts.append(
+                f"\n### {label} signals\n"
+                f"(No {label.lower()} on watchlist — skip this section in the brief.)"
+            )
+            continue
+        parts.append(
+            f"\n### {label} signals\n"
+            + json.dumps(class_signals, indent=2, ensure_ascii=False)
+        )
+    suggestions = state.get("suggestions", [])
+    if suggestions:
+        parts.append("\n### Discovery suggestions\n" + json.dumps(suggestions, indent=2, ensure_ascii=False))
+    errors = state.get("errors", [])
+    if errors:
+        parts.append("\n### Errors\n" + json.dumps(errors, indent=2, ensure_ascii=False))
+    return "\n".join(parts)
 
 
 def _state_for_prompt(
@@ -278,12 +343,14 @@ def _fundamentals_tickers(
 ) -> list[str]:
     if not settings.ADVISOR_FETCH_FUNDAMENTALS:
         return []
+    # P/E / PEG are usually N/A for ETFs and ETCs — skip those classes.
+    eligible = [entry for entry in (entries or watchlist) if entry.asset_class == "stock"]
     if mode == "brief":
-        return [entry.ticker for entry in watchlist]
+        return [entry.ticker for entry in eligible]
     if entries:
-        return [entry.ticker for entry in entries]
+        return [entry.ticker for entry in eligible]
     mentioned = _entries_mentioned_in_text(question, watchlist)
-    return [entry.ticker for entry in mentioned]
+    return [entry.ticker for entry in mentioned if entry.asset_class == "stock"]
 
 
 async def _fetch_valuation_metrics(
@@ -391,6 +458,7 @@ async def _fetch_fresh_headlines(entries: list[WatchlistEntry]) -> tuple[dict[st
                 entry.name,
                 window_hours=window,
                 limit=limit,
+                asset_class=entry.asset_class,
             )
             for entry in entries
         ]
@@ -425,20 +493,22 @@ def _build_prompt(
     valuation: dict[str, dict],
     on_demand: dict | None,
     scan: IndicatorScanResult | None,
+    skills_block: str = "",
 ) -> str:
     system = (
         "You are a personal investment advisor assistant. You help the user think through "
         "investment decisions — you never execute trades and have no portfolio access.\n"
         "Rules:\n"
         "- Latest Monitor run covers the configured watchlist only\n"
+        "- Respect asset classes (stock / etf / etc) — do not mix equity valuation with ETF/ETC analysis\n"
         "- Indicator scan results include a pre-computed exact_leader — always state that ticker and value\n"
         "- On-demand analysis covers explicitly mentioned tickers outside the watchlist\n"
         "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Valuation metrics, "
-        "Live quotes, and Fresh headlines\n"
-        "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for expensive/cheap/valuation questions\n"
+        "Live quotes, Fresh headlines, and activated Skills\n"
+        "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for stock expensive/cheap questions only\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
         "- Do not invent prices, RSI, P/E, PEG values, or headlines not present in the context\n"
-        "- Note when P/E or PEG is unavailable (common for ETFs); do not substitute guesses\n"
+        "- Note when P/E or PEG is unavailable (common for ETFs/ETCs); do not substitute guesses\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
         "- Be concise — lead with the direct answer, then supporting detail"
@@ -450,14 +520,24 @@ def _build_prompt(
         if mentioned:
             watchlist_block = mentioned
 
+    if mode == "brief":
+        watchlist_text = _format_watchlist_by_class(watchlist_block)
+        state_text = _format_state_block_by_class(prompt_state, watchlist)
+    else:
+        watchlist_text = _format_watchlist_block(watchlist_block)
+        state_text = _format_state_block(prompt_state)
+
     parts = [
         system,
         "",
+        "=== Activated skills ===",
+        skills_block or "No specialized skills activated.",
+        "",
         "=== Watchlist ===",
-        _format_watchlist_block(watchlist_block),
+        watchlist_text,
         "",
         "=== Latest Monitor run ===",
-        _format_state_block(prompt_state),
+        state_text,
         "",
         "=== Indicator scan (computed) ===",
         format_scan_block(scan),
@@ -511,69 +591,85 @@ async def advisor_respond(
     if state is None:
         return warning or "Monitor state unavailable."
 
-    if resolved is None:
-        entries, on_demand, scan = await resolve_advisor_targets(
+    with start_span("pia.advisor.respond", attributes={"pia.advisor.mode": mode}) as respond_span:
+        if resolved is None:
+            entries, on_demand, scan = await resolve_advisor_targets(
+                question=question,
+                watchlist=watchlist,
+                mode=mode,
+            )
+        else:
+            entries, on_demand, scan = resolved
+        link_entries = entries or _entries_mentioned_in_text(question, watchlist)
+        quote_entries = link_entries if settings.ADVISOR_FETCH_QUOTES else []
+
+        t0 = time.perf_counter()
+        with start_span("pia.advisor.fetch"):
+            headlines_result, quotes_result, valuation_result = await asyncio.gather(
+                _fetch_fresh_headlines(entries),
+                _fetch_live_quotes(quote_entries),
+                _fetch_valuation_metrics(
+                    mode=mode,
+                    question=question,
+                    watchlist=watchlist,
+                    entries=entries,
+                ),
+            )
+        fetch_seconds = time.perf_counter() - t0
+        fresh_headlines, fetch_errors = headlines_result
+        live_quotes, quote_errors = quotes_result
+        valuation, fundamentals_errors = valuation_result
+
+        skills = select_skills(
+            mode=mode,
             question=question,
             watchlist=watchlist,
-            mode=mode,
+            target_entries=entries or _entries_mentioned_in_text(question, watchlist) or None,
         )
-    else:
-        entries, on_demand, scan = resolved
-    link_entries = entries or _entries_mentioned_in_text(question, watchlist)
-    quote_entries = link_entries if settings.ADVISOR_FETCH_QUOTES else []
+        skills_block = format_skills_block(skills)
+        skill_names = activated_skill_names(skills)
+        logger.info("Advisor skills activated: %s", skill_names)
+        if skill_names:
+            respond_span.set_attribute("pia.skills.activated", ",".join(skill_names))
 
-    t0 = time.perf_counter()
-    headlines_result, quotes_result, valuation_result = await asyncio.gather(
-        _fetch_fresh_headlines(entries),
-        _fetch_live_quotes(quote_entries),
-        _fetch_valuation_metrics(
-            mode=mode,
+        prompt = _build_prompt(
             question=question,
+            state=state,
             watchlist=watchlist,
-            entries=entries,
-        ),
-    )
-    fetch_seconds = time.perf_counter() - t0
-    fresh_headlines, fetch_errors = headlines_result
-    live_quotes, quote_errors = quotes_result
-    valuation, fundamentals_errors = valuation_result
+            history=history,
+            mode=mode,
+            fresh_headlines=fresh_headlines,
+            live_quotes=live_quotes,
+            valuation=valuation,
+            on_demand=on_demand,
+            scan=scan,
+            skills_block=skills_block,
+        )
+        logger.info(
+            "Advisor invoke mode=%s tickers_fetched=%s adhoc=%s scan=%s prompt_chars=%d",
+            mode,
+            list(fresh_headlines),
+            on_demand.get("tickers") if on_demand else [],
+            scan.leader.ticker if scan else None,
+            len(prompt),
+        )
+        try:
+            llm_start = time.perf_counter()
+            with start_span("pia.advisor.llm"):
+                answer = await asyncio.to_thread(_invoke_advisor_sync, prompt)
+            llm_seconds = time.perf_counter() - llm_start
+        except Exception as exc:
+            logger.exception("Advisor LLM failed: %s", exc)
+            return f"Advisor request failed ({exc}). Check Ollama is running."
 
-    prompt = _build_prompt(
-        question=question,
-        state=state,
-        watchlist=watchlist,
-        history=history,
-        mode=mode,
-        fresh_headlines=fresh_headlines,
-        live_quotes=live_quotes,
-        valuation=valuation,
-        on_demand=on_demand,
-        scan=scan,
-    )
-    logger.info(
-        "Advisor invoke mode=%s tickers_fetched=%s adhoc=%s scan=%s prompt_chars=%d",
-        mode,
-        list(fresh_headlines),
-        on_demand.get("tickers") if on_demand else [],
-        scan.leader.ticker if scan else None,
-        len(prompt),
-    )
-    try:
-        llm_start = time.perf_counter()
-        answer = await asyncio.to_thread(_invoke_advisor_sync, prompt)
-        llm_seconds = time.perf_counter() - llm_start
-    except Exception as exc:
-        logger.exception("Advisor LLM failed: %s", exc)
-        return f"Advisor request failed ({exc}). Check Ollama is running."
-
-    logger.info(
-        "Advisor timing mode=%s fetch=%.1fs llm=%.1fs prompt_chars=%d reasoning=%s",
-        mode,
-        fetch_seconds,
-        llm_seconds,
-        len(prompt),
-        settings.OLLAMA_ADVISOR_REASONING,
-    )
+        logger.info(
+            "Advisor timing mode=%s fetch=%.1fs llm=%.1fs prompt_chars=%d reasoning=%s",
+            mode,
+            fetch_seconds,
+            llm_seconds,
+            len(prompt),
+            settings.OLLAMA_ADVISOR_REASONING,
+        )
 
     prefix_parts: list[str] = []
     if warning:
