@@ -18,6 +18,9 @@ SCHEDULER_LOG = PROJECT_ROOT / "logs" / "scheduler.log"
 # v1 exchange map (see SPEC.md — Market calendar)
 EXCHANGE_BY_SUFFIX = {
     ".DE": "XETR",
+    ".FGI": "XETR",
+    ".L": "LSE",
+    ".AS": "XAMS",
 }
 DEFAULT_US_EXCHANGE = "NYSE"
 
