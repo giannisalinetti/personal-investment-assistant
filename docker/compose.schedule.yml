@@ -1,0 +1,12 @@
+# Use with --profile schedule (Ofelia). Disables in-process APScheduler to avoid double Monitor runs.
+#   podman-compose -f docker/compose.yml -f docker/compose.schedule.yml --profile schedule up -d
+
+services:
+  pia-web:
+    environment:
+      PIA_MONITOR_SCHEDULER: "false"
+  pia-bot:
+    environment:
+      PIA_MONITOR_SCHEDULER: "false"
+  ofelia:
+    profiles: ["schedule"]

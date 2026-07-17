@@ -1,0 +1,156 @@
+# PIA Compose stack (Docker Compose / Podman Compose)
+# Requires: docker compose plugin, or `pip install podman-compose`.
+# If ../.env is missing: `touch .env`
+#
+# Stub smoke (no GPU):
+#   podman build -t localhost/pia:local -f docker/Dockerfile .
+#   podman build -t localhost/pia-llm-stub:local -f docker/llm-stub/Dockerfile docker/llm-stub
+#   podman-compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub up -d
+#   podman-compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub run --rm pia-run --run-type manual
+#
+# GPU host (NVIDIA + vLLM):
+#   podman-compose -f docker/compose.yml -f docker/compose.gpu.yml --profile gpu up -d
+#
+# Telegram bot is started by default (needs TELEGRAM_* in .env).
+# pia-run runs once on `up` (manual Monitor); scheduled Monitor stays in pia-web.
+#
+# Host Ollama: PIA_LLM_PROVIDER=ollama and
+#   OLLAMA_BASE_URL=http://host.containers.internal:11434  (Podman)
+#   or http://host.docker.internal:11434                   (Docker)
+
+name: pia
+
+x-pia-common: &pia-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: localhost/pia:local
+  env_file:
+    - ../.env
+  environment: &pia-env
+    PIA_WEB_HOST: "0.0.0.0"
+    PIA_WEB_PORT: "8765"
+    LOG_TO_CONSOLE: "true"
+  volumes:
+    - pia-data:/app/data
+    - pia-logs:/app/logs
+    - pia-cache:/app/.cache
+    - ../watchlists:/app/watchlists:ro
+    - ../.agents:/app/.agents:ro
+  working_dir: /app
+  networks:
+    - pia
+
+services:
+  # Optional depends_on for llm-stub / vllm live in compose.stub.yml / compose.gpu.yml
+  # (podman-compose does not support Compose Spec `required: false`).
+  pia-web:
+    <<: *pia-common
+    command: ["pia-web"]
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+
+  # One-shot Monitor on stack start (exits when done). Cron stays in pia-web.
+  pia-run:
+    <<: *pia-common
+    command: ["pia-run", "--run-type", "manual"]
+    restart: "no"
+
+  pia-bot:
+    <<: *pia-common
+    command: ["pia-bot"]
+    restart: unless-stopped
+    environment:
+      <<: *pia-env
+      # Avoid duplicate APScheduler when pia-web is also running
+      PIA_MONITOR_SCHEDULER: "false"
+
+  # OpenAI-compatible stub — network alias `vllm` so OPENAI_BASE_URL=http://vllm:8000/v1 works
+  llm-stub:
+    profiles: ["stub"]
+    build:
+      context: ./llm-stub
+      dockerfile: Dockerfile
+    image: localhost/pia-llm-stub:local
+    environment:
+      # Advertise as vllm-compatible for compose env defaults
+      STUB_MODEL: pia-stub
+    networks:
+      pia:
+        aliases:
+          - vllm
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  vllm:
+    profiles: ["gpu"]
+    image: vllm/vllm-openai:latest
+    command:
+      - "--model"
+      - "${VLLM_MODEL:-Qwen/Qwen3-8B}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+    networks:
+      - pia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
+  # Schedules Monitor runs by starting ephemeral containers from pia:local
+  ofelia:
+    profiles: ["schedule"]
+    image: docker.io/mcuadros/ofelia:latest
+    depends_on:
+      - pia-web
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./ofelia.ini:/etc/ofelia/config.ini:ro
+    command: ["daemon", "--config", "/etc/ofelia/config.ini"]
+    networks:
+      - pia
+    restart: unless-stopped
+
+volumes:
+  pia-data:
+  pia-logs:
+  pia-cache:
+  vllm-cache:
+
+networks:
+  pia:
+    name: pia

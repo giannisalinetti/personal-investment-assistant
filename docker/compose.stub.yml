@@ -1,0 +1,45 @@
+# Override for --profile stub smoke tests (OpenAI-compatible stub via DNS alias vllm).
+# Usage:
+#   podman compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub up -d --build
+
+services:
+  pia-web:
+    environment:
+      PIA_LLM_PROVIDER: vllm
+      OPENAI_BASE_URL: http://vllm:8000/v1
+      OPENAI_API_KEY: not-needed
+      OPENAI_MODEL: pia-stub
+      VLLM_MODEL: pia-stub
+      LLM_BASE_URL: http://vllm:8000/v1
+      PIA_WEB_HOST: "0.0.0.0"
+      LOG_TO_CONSOLE: "true"
+    depends_on:
+      llm-stub:
+        condition: service_healthy
+
+  pia-run:
+    environment:
+      PIA_LLM_PROVIDER: vllm
+      OPENAI_BASE_URL: http://vllm:8000/v1
+      OPENAI_API_KEY: not-needed
+      OPENAI_MODEL: pia-stub
+      VLLM_MODEL: pia-stub
+      LLM_BASE_URL: http://vllm:8000/v1
+      LOG_TO_CONSOLE: "true"
+    depends_on:
+      llm-stub:
+        condition: service_healthy
+
+  pia-bot:
+    environment:
+      PIA_LLM_PROVIDER: vllm
+      OPENAI_BASE_URL: http://vllm:8000/v1
+      OPENAI_API_KEY: not-needed
+      OPENAI_MODEL: pia-stub
+      VLLM_MODEL: pia-stub
+      LLM_BASE_URL: http://vllm:8000/v1
+      LOG_TO_CONSOLE: "true"
+    depends_on:
+      llm-stub:
+        condition: service_healthy
+
