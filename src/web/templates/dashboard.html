@@ -3,58 +3,25 @@
 {% block content %}
 <section class="panel">
   <h1>Monitor dashboard</h1>
-  <p class="muted">Read-only view of the last <code>pia-graph</code> / <code>pia-run</code> output.</p>
-  <div id="dashboard-root" data-initial='{{ dashboard | tojson }}'>
-    {% if not dashboard.available %}
-    <p class="warn">{{ dashboard.message }}</p>
+  <p class="muted">Last Monitor run output, grouped by asset class. Click a row for details.
+    {% if monitor_scheduler %}
+    Scheduled locally at
+    {% for name, time in next_runs.items() %}{{ time }}{% if not loop.last %}, {% endif %}{% endfor %}
+    ({{ timezone }}).
     {% else %}
-    {% if dashboard.stale_warning %}
-    <p class="warn">{{ dashboard.stale_warning }}</p>
+    In-process scheduler is off — use CronJobs / Ofelia / <code>pia-run</code>.
     {% endif %}
-    <dl class="meta-grid">
-      <dt>Model</dt><dd>{{ dashboard.model }}</dd>
-      <dt>Watchlist</dt><dd>{{ dashboard.watchlist_count }} tickers</dd>
-      <dt>Last run</dt><dd>{{ dashboard.last_run }}</dd>
-      {% if dashboard.state_age_hours is not none %}
-      <dt>Age</dt><dd>{{ dashboard.state_age_hours }}h</dd>
-      {% endif %}
-    </dl>
-    <h2>Signals</h2>
-    <table class="signals-table">
-      <thead><tr><th></th><th>Ticker</th><th>Signal</th><th>Conf.</th><th>Rationale</th></tr></thead>
-      <tbody>
-        {% for s in dashboard.signals %}
-        <tr>
-          <td>{{ s.emoji }}</td>
-          <td><strong>{{ s.ticker }}</strong></td>
-          <td class="signal-{{ s.signal | lower }}">{{ s.signal }}</td>
-          <td>{{ s.confidence }}</td>
-          <td>{{ s.rationale }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="muted">No signals in last run.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <h2>Suggested</h2>
-    <ul class="suggestions">
-      {% for line in dashboard.suggestions %}
-      <li>{{ line }}</li>
-      {% else %}
-      <li class="muted">None</li>
-      {% endfor %}
-    </ul>
-    <h2>Watchlist note</h2>
-    <p>{{ dashboard.watchlist_note or "None" }}</p>
-    {% if dashboard.errors %}
-    <h2>Errors</h2>
-    <ul class="errors">{% for e in dashboard.errors %}<li>{{ e }}</li>{% endfor %}</ul>
-    {% endif %}
-    {% endif %}
+  </p>
+  <p class="toolbar">
+    <button type="button" id="btn-refresh-monitor" class="btn primary">Refresh Monitor</button>
+    <span id="monitor-run-status" class="muted" aria-live="polite"></span>
+  </p>
+  <div id="dashboard-root" data-initial='{{ dashboard | tojson }}'>
+    <p class="muted">Loading…</p>
   </div>
   <p class="refresh-note muted">Auto-refreshes every 10s · <span id="last-refresh">—</span></p>
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/dashboard.js"></script>
+<script src="/static/dashboard.js?v=5"></script>
 {% endblock %}

@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import PROJECT_ROOT, settings
+from src.config import PROJECT_ROOT, WatchlistEntry, load_watchlist, settings, watchlist_counts
 from src.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -23,22 +23,118 @@ NEXT_RUNS = {
     "end_of_day": "17:30",
 }
 
+_MAX_HEADLINES_PER_TICKER = 5
+
+
+def _lean_indicators(raw: object) -> dict[str, float | None]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, float | None] = {}
+    for key in ("rsi_14", "macd", "macd_signal", "ema_20", "ema_50", "bb_lower", "close"):
+        value = raw.get(key)
+        if value is None:
+            out[key] = None
+        else:
+            try:
+                out[key] = float(value)
+            except (TypeError, ValueError):
+                out[key] = None
+    return out
+
+
+def _build_ticker_details(state: AgentState, watchlist: list[WatchlistEntry]) -> dict[str, dict]:
+    """Compact per-ticker snapshot for dashboard expand panels."""
+    names = {entry.ticker.upper(): entry.name for entry in watchlist}
+    market_data = state.get("market_data") or {}
+    news_items = state.get("news_items") or []
+
+    details: dict[str, dict] = {}
+    for ticker, payload in market_data.items():
+        key = str(ticker).upper()
+        snapshot = payload.get("snapshot") if isinstance(payload, dict) else {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        details[key] = {
+            "name": payload.get("name") or names.get(key, key),
+            "asset_class": payload.get("asset_class", "stock"),
+            "close": snapshot.get("close"),
+            "as_of": snapshot.get("as_of"),
+            "ytd_return_pct": snapshot.get("ytd_return_pct"),
+            "bullish": list(payload.get("bullish") or []),
+            "bearish": list(payload.get("bearish") or []),
+            "indicators": _lean_indicators(payload.get("indicators")),
+            "headlines": [],
+        }
+
+    for item in news_items:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("ticker", "")).upper()
+        if not key:
+            continue
+        if key not in details:
+            details[key] = {
+                "name": names.get(key, key),
+                "asset_class": "stock",
+                "close": None,
+                "as_of": None,
+                "ytd_return_pct": None,
+                "bullish": [],
+                "bearish": [],
+                "indicators": {},
+                "headlines": [],
+            }
+        headlines = details[key]["headlines"]
+        if len(headlines) >= _MAX_HEADLINES_PER_TICKER:
+            continue
+        headlines.append(
+            {
+                "headline": item.get("headline") or "",
+                "source": item.get("source") or "",
+                "link": item.get("link") or "",
+                "sentiment": item.get("sentiment"),
+            }
+        )
+
+    # Ensure watchlist names exist even when market_data failed for a ticker
+    for entry in watchlist:
+        key = entry.ticker.upper()
+        if key not in details:
+            details[key] = {
+                "name": entry.name,
+                "asset_class": entry.asset_class,
+                "close": None,
+                "as_of": None,
+                "ytd_return_pct": None,
+                "bullish": [],
+                "bearish": [],
+                "indicators": {},
+                "headlines": [],
+            }
+        elif not details[key].get("name"):
+            details[key]["name"] = entry.name
+
+    return details
+
 
 def state_to_document(state: AgentState) -> dict:
     """Build the JSON document written for the console and scheduled runs."""
-    watchlist = state.get("watchlist", [])
+    entries = load_watchlist()
+    counts = watchlist_counts(entries)
     return {
         "last_run": state.get("run_timestamp") or datetime.now(timezone.utc).isoformat(),
         "run_type": state.get("run_type", "manual"),
         "skipped": bool(state.get("skipped")),
         "next_runs": NEXT_RUNS,
         "model": settings.OLLAMA_MODEL,
-        "watchlist_count": len(watchlist),
+        "watchlist_count": len(entries),
+        "watchlist_counts": counts,
         "signals": state.get("signals", []),
         "suggestions": state.get("suggestions", []),
         "watchlist_note": state.get("watchlist_note"),
         "notification_sent": bool(state.get("notification_sent")),
         "errors": state.get("errors", []),
+        "ticker_details": _build_ticker_details(state, entries),
     }
 
 
@@ -96,8 +192,8 @@ def stale_state_warning(document: dict | None) -> str | None:
     """Return a user-facing warning when Monitor state is missing or stale."""
     if document is None:
         return (
-            "No Monitor run data found. Run `uv run pia-graph` or wait for the next "
-            "scheduled `pia-run` before asking for analysis."
+            "No Monitor run data found. Click Refresh Monitor on the dashboard, "
+            "or wait for the next scheduled run (08:00 / 13:00 / 17:30)."
         )
     age = state_age_hours(document)
     if age is None:
@@ -105,7 +201,8 @@ def stale_state_warning(document: dict | None) -> str | None:
     if age > settings.ADVISOR_STALE_STATE_HOURS:
         return (
             f"Monitor data is {age:.1f}h old (stale after "
-            f"{settings.ADVISOR_STALE_STATE_HOURS:g}h). Consider running "
-            "`uv run pia-graph` for fresh signals."
+            f"{settings.ADVISOR_STALE_STATE_HOURS:g}h). Click Refresh Monitor "
+            "on the dashboard, or wait for the next scheduled run "
+            f"({', '.join(f'{k} {v}' for k, v in NEXT_RUNS.items())} {settings.TIMEZONE})."
         )
     return None

@@ -1,10 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}PIA{% endblock %} — Personal Investment Assistant</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("pia-theme");
+        var theme = stored === "dark" || stored === "light" ? stored : "light";
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (_) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,650&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=5">
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -15,6 +29,7 @@
       <a href="/advisor{{ token_query }}" class="{% if active == 'advisor' %}active{% endif %}">Advisor</a>
       <a href="/about{{ token_query }}" class="{% if active == 'about' %}active{% endif %}">About</a>
     </nav>
+    <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle night mode">Night</button>
   </header>
   <main class="content">
     {% block content %}{% endblock %}
@@ -22,7 +37,7 @@
   <footer class="site-footer">
     <p class="disclaimer">{{ disclaimer }}</p>
   </footer>
-  <script src="/static/common.js"></script>
+  <script src="/static/common.js?v=5"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
