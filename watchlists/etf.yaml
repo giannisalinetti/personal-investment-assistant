@@ -1,0 +1,21 @@
+# Exchange-traded funds watchlist
+# Use Yahoo Finance symbols (European UCITS usually need .DE / .L / .AS).
+entries:
+  - ticker: VWCE.DE
+    name: Vanguard FTSE All-World UCITS ETF (USD) Accumulating
+  - ticker: SPY
+    name: S&P 500 ETF
+  - ticker: QQQ
+    name: Nasdaq-100 ETF
+  - ticker: XDWT.DE
+    name: Xtrackers MSCI World Information Technology UCITS ETF
+  - ticker: WTEF.DE
+    name: Amundi MSCI World Information Technology UCITS ETF EUR Acc
+  - ticker: EQQQ.DE
+    name: Invesco EQQQ Nasdaq-100 UCITS ETF
+  - ticker: IUSQ.DE
+    name: iShares MSCI ACWI UCITS ETF USD (Acc)
+  - ticker: PABW.DE
+    name: Amundi MSCI World Climate Paris Aligned UCITS ETF Acc
+  - ticker: Q8Y0.DE
+    name: iShares Global Clean Energy Transition UCITS ETF USD (Acc)

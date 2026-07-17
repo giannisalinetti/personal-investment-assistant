@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from src.config import settings
+from src.config import ASSET_CLASS_LABELS, settings
 from src.state import AgentState
 from src.tools.email_client import email_configured, send_market_update_email
 from src.tools.telegram_client import send_telegram_message, telegram_configured
@@ -13,16 +13,20 @@ logger = logging.getLogger(__name__)
 
 DISCLAIMER = "⚠️ Not financial advice. Always do your own research."
 
+_CLASS_ORDER = ("stock", "etf", "etc")
+
 
 def format_suggestion_line(item: dict) -> str:
     """Format a discovery suggestion with ticker, full name, and reason."""
     ticker = item["ticker"]
     name = str(item.get("name", "")).strip()
     reason = str(item.get("reason", "")).strip()
+    asset_class = item.get("asset_class")
+    class_tag = f" [{asset_class}]" if asset_class else ""
     label = f"{ticker} — {name}" if name and name.upper() != ticker else ticker
     if reason:
-        return f"  {label} — {reason}"
-    return f"  {label}"
+        return f"  {label}{class_tag} — {reason}"
+    return f"  {label}{class_tag}"
 
 
 def _is_notifiable_signal(signal: dict) -> bool:
@@ -49,17 +53,32 @@ def should_notify(state: AgentState) -> bool:
 
 
 def format_notification(state: AgentState) -> str:
-    """Build the human-readable notification body."""
+    """Build the human-readable notification body, grouped by asset class."""
     run_type = state.get("run_type", "manual")
     lines = [f"📊 Market Update — {run_type}"]
 
     notifiable = [signal for signal in state.get("signals", []) if _is_notifiable_signal(signal)]
-    for signal in notifiable[: settings.MAX_TICKERS_PER_NOTIFICATION]:
-        emoji = {"BUY": "🟢", "SELL": "🔴", "WATCH": "🟡"}.get(signal["signal"], "⚪")
-        lines.append(
-            f"\n{emoji} {signal['ticker']} — {signal['signal']} "
-            f"({signal['confidence']} confidence)\n{signal['rationale']}"
-        )
+    shown = 0
+    for asset_class in _CLASS_ORDER:
+        class_signals = [
+            signal
+            for signal in notifiable
+            if signal.get("asset_class", "stock") == asset_class
+        ]
+        if not class_signals:
+            continue
+        lines.append(f"\n— {ASSET_CLASS_LABELS.get(asset_class, asset_class)} —")
+        for signal in class_signals:
+            if shown >= settings.MAX_TICKERS_PER_NOTIFICATION:
+                break
+            emoji = {"BUY": "🟢", "SELL": "🔴", "WATCH": "🟡"}.get(signal["signal"], "⚪")
+            lines.append(
+                f"\n{emoji} {signal['ticker']} — {signal['signal']} "
+                f"({signal['confidence']} confidence)\n{signal['rationale']}"
+            )
+            shown += 1
+        if shown >= settings.MAX_TICKERS_PER_NOTIFICATION:
+            break
 
     if len(notifiable) > settings.MAX_TICKERS_PER_NOTIFICATION:
         lines.append(

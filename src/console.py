@@ -68,21 +68,29 @@ def _render_dashboard(document: dict | None) -> Panel:
     )
 
     signal_lines: list[Text] = []
-    for signal in document.get("signals", []):
-        emoji = SIGNAL_EMOJI.get(signal.get("signal", "HOLD"), "⚪")
-        ticker = signal.get("ticker", "?")
-        label = signal.get("signal", "HOLD")
-        confidence = signal.get("confidence", "—")
-        rationale = signal.get("rationale", "")
-        line = Text()
-        line.append(f"  {emoji} {ticker:<8} ", style="bold")
-        line.append(f"{label:<5} ", style=_signal_style(label))
-        line.append(f"{confidence:<6} ", style="dim")
-        line.append(rationale)
-        signal_lines.append(line)
+    for asset_class, label in (("stock", "Stocks"), ("etf", "ETFs"), ("etc", "ETCs")):
+        class_signals = [
+            s for s in document.get("signals", []) if s.get("asset_class", "stock") == asset_class
+        ]
+        signal_lines.append(Text(f"\n{label}", style="bold underline"))
+        if not class_signals:
+            signal_lines.append(Text("  (none)", style="dim"))
+            continue
+        for signal in class_signals:
+            emoji = SIGNAL_EMOJI.get(signal.get("signal", "HOLD"), "⚪")
+            ticker = signal.get("ticker", "?")
+            sig_label = signal.get("signal", "HOLD")
+            confidence = signal.get("confidence", "—")
+            rationale = signal.get("rationale", "")
+            line = Text()
+            line.append(f"  {emoji} {ticker:<8} ", style="bold")
+            line.append(f"{sig_label:<5} ", style=_signal_style(sig_label))
+            line.append(f"{confidence:<6} ", style="dim")
+            line.append(rationale)
+            signal_lines.append(line)
 
-    if not signal_lines:
-        signal_lines.append(Text("  No signals in last run.", style="dim"))
+    if not document.get("signals"):
+        signal_lines = [Text("  No signals in last run.", style="dim")]
 
     suggestions = document.get("suggestions", [])
     suggestion_lines = [Text(format_suggestion_line(item).strip()) for item in suggestions]

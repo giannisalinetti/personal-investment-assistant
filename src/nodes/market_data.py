@@ -29,6 +29,7 @@ async def _load_ticker(entry: WatchlistEntry) -> tuple[str, dict | None, str | N
         )
         payload = {
             "name": entry.name,
+            "asset_class": entry.asset_class,
             "snapshot": snapshot_market_row(frame, ticker),
             "indicators": signals.values,
             "bullish": list(signals.bullish),

@@ -6,7 +6,11 @@
   <p>Personal Investment Assistant (PIA) is an advisory-only tool over your watchlist and public market data. It does not execute trades or access your portfolio.</p>
   <dl class="meta-grid">
     <dt>LLM model</dt><dd><code>{{ model }}</code></dd>
-    <dt>Watchlist</dt><dd>{{ watchlist_count }} tickers</dd>
+    <dt>Watchlist</dt>
+    <dd>
+      {{ watchlist_count }} total
+      (stocks {{ watchlist_counts.stock }}, ETFs {{ watchlist_counts.etf }}, ETCs {{ watchlist_counts.etc }})
+    </dd>
     <dt>Timezone</dt><dd>{{ timezone }}</dd>
   </dl>
   <h2>Scheduled Monitor runs</h2>

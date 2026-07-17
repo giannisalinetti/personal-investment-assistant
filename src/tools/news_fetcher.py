@@ -21,13 +21,23 @@ def watchlist_google_news_feed(tickers: list[str]) -> str:
     return f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
 
 
-def ticker_google_news_feed(ticker: str, company_name: str | None = None) -> str:
+def ticker_google_news_feed(
+    ticker: str,
+    company_name: str | None = None,
+    *,
+    asset_class: str | None = None,
+) -> str:
     """Build a Google News RSS URL for one ticker (Advisor fresh-news lookup)."""
     terms = [ticker]
     if company_name:
         short_name = company_name.split(" Corp")[0].split(" Inc")[0].strip()
         if short_name and short_name.lower() not in ticker.lower():
             terms.append(short_name)
+    if asset_class == "etf":
+        terms.append("ETF")
+    elif asset_class == "etc":
+        terms.append("commodity")
+        terms.append("ETC")
     query = quote(" OR ".join(terms))
     return f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
 
@@ -95,9 +105,10 @@ async def fetch_ticker_headlines(
     *,
     window_hours: int,
     limit: int,
+    asset_class: str | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Fetch fresh Google News headlines for a single ticker."""
-    url = ticker_google_news_feed(ticker, company_name)
+    url = ticker_google_news_feed(ticker, company_name, asset_class=asset_class)
     try:
         articles = await fetch_feed(url, window_hours=window_hours)
         return articles[:limit], []

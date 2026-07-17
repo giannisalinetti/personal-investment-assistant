@@ -1,0 +1,15 @@
+# Exchange-traded commodities (ETC / commodity ETF proxies)
+# Yahoo needs venue-qualified symbols — bare XAU/XAG codes are not tradeable tickers.
+entries:
+  - ticker: 4GLD.DE
+    name: Xetra-Gold ETC
+  - ticker: SLV
+    name: iShares Silver Trust
+  - ticker: PPLT
+    name: abrdn Physical Platinum Shares ETF
+  - ticker: PALL
+    name: abrdn Physical Palladium Shares ETF
+  - ticker: CPER
+    name: United States Copper Index Fund
+  - ticker: COPX
+    name: Global X Copper Miners ETF

@@ -1,0 +1,27 @@
+# Equity stocks watchlist
+entries:
+  - ticker: AAPL
+    name: Apple Inc.
+    alerts:
+      rsi_oversold: 30
+      rsi_overbought: 70
+  - ticker: MSFT
+    name: Microsoft Corp.
+    alerts:
+      rsi_oversold: 30
+      rsi_overbought: 70
+  - ticker: IBM
+    name: International Business Machines Corp.
+    alerts:
+      rsi_oversold: 30
+      rsi_overbought: 70
+  - ticker: MU
+    name: Micron Technology Inc
+    alerts:
+      rsi_oversold: 30
+      rsi_overbought: 70
+  - ticker: NVDA
+    name: NVIDIA Corp
+    alerts:
+      rsi_oversold: 30
+      rsi_overbought: 70
