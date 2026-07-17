@@ -17,6 +17,15 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 
 **LangGraph** orchestrates the Monitor pipeline. Advisor interactions use a separate reasoning path fed by persisted run state — see [Advisor Mode](#advisor-mode-on-demand-reasoning).
 
+**Operator docs** (preferred reading for architecture and deploy):
+
+| Guide | Path |
+|-------|------|
+| LangGraph / Advisor architecture | [`docs/agent_architecture.md`](docs/agent_architecture.md) |
+| Compose | [`docs/compose.md`](docs/compose.md) |
+| Kubernetes | [`docs/kubernetes.md`](docs/kubernetes.md) |
+| OpenShift + OpenShift AI | [`docs/openshift.md`](docs/openshift.md) |
+
 ### Roadmap
 
 | Phase | Focus | Status |
@@ -26,8 +35,10 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 | **2** | Advisor mode (CLI, Telegram, reasoning, fresh news, useful links) | ✅ Complete |
 | **3** | Production Advisor (persisted memory, proactive brief, live quotes, valuation metrics, scans, `pia-bot` install scripts) | ✅ Complete |
 | **4** | Browser web app (dashboard + advisor chat) | ✅ Implemented |
-| **4.5** | Optional cloud LLM providers (BYOK: Claude, Gemini, ChatGPT) + provider abstraction in `llm.py` | Planned |
-| **5** | Portable deployment (Docker Compose, Kubernetes) with **vLLM** as the self-hosted inference server | Planned |
+| **4.1** | Asset classes (stocks/ETF/ETC), runtime Agent Skills, OTLP GenAI telemetry | ✅ Implemented |
+| **4.5** | Optional cloud LLM providers (BYOK: Anthropic, OpenAI-compatible) | ✅ Implemented |
+| **5a** | Docker/Podman Compose — PIA CPU image, stub/gpu profiles, ofelia schedule | ✅ Implemented |
+| **5b** | Kubernetes + vLLM (stub/gpu/cloud-only overlays) | ✅ Implemented |
 
 ---
 
@@ -35,7 +46,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 
 **Monitor mode (scheduled pipeline)**
 
-- Monitor a user-defined watchlist of stocks and ETFs
+- Monitor a user-defined watchlist of stocks, ETFs, and ETCs
 - Suggest additional correlated instruments not in the watchlist
 - Compute technical indicators (RSI, MACD, moving averages)
 - Fetch and interpret relevant financial news and sentiment
@@ -69,17 +80,35 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 
 - Use Monitor dashboard and Advisor chat in a local web browser (`pia-web`)
 
-**Phase 4.5 (planned)**
+**Phase 4.1 (complete)**
 
-- Optional **bring-your-own-key (BYOK)** cloud LLMs (Anthropic Claude, Google Gemini, OpenAI ChatGPT) alongside local inference
-- Separate Monitor vs Advisor provider/model selection (e.g. cloud Advisor on a GPU-less VPS, local Monitor on a Mac)
-- **Default remains local** (Ollama on desktop, or vLLM in Phase 5 clusters)
+- Separate watchlists for stocks, ETFs, and ETCs (`watchlists/{stock,etf,etc}.yaml`) with `asset_class` on signals
+- Single Monitor LangGraph remains class-aware (not three pipelines)
+- Runtime Agent Skills under `.agents/skills/` (agentskills.io), auto-activated by class/intent (Advisor + lean Monitor LLM calls)
+- OpenTelemetry GenAI traces via OTLP (Aspire Dashboard on Podman)
 
-**Phase 5 (planned)**
+**Phase 4.5 (complete)**
 
-- **Docker Compose** and **Kubernetes** packaging for portable, always-on deployment
-- **vLLM** as the self-hosted OpenAI-compatible inference server (GPU nodes); PIA talks to it via `LLM_BASE_URL`, not embedded inference
-- Stateless app containers + PVC/ConfigMap for `data/`, `watchlist.yaml`, secrets
+- Optional **bring-your-own-key (BYOK)** cloud LLMs (Anthropic, OpenAI-compatible) alongside local Ollama
+- Separate Monitor vs Advisor provider/model selection
+- **Default remains local** (Ollama when no cloud keys)
+
+**Phase 5a (complete)**
+
+- CPU `docker/Dockerfile` + Compose/Podman stack (`docker/compose.yml`)
+- Profiles: `stub` (OpenAI-compatible smoke), `gpu` (vLLM/NVIDIA), `bot`, `schedule` (ofelia)
+- Env aliases `LLM_BASE_URL` → `OPENAI_BASE_URL`, `VLLM_MODEL` → `OPENAI_MODEL`
+
+**Phase 5b (complete)**
+
+- Kubernetes manifests under `deploy/k8s/` (base + stub / gpu / cloud-only overlays)
+- Shared Service DNS `vllm:8000`; CronJobs for Monitor; `pia-bot` replicas=1
+- Layered test docs: client stub → kind/k3d stub → real GPU smoke
+
+**Phase 5 (summary)**
+
+- Portable always-on deploy; vLLM as self-hosted OpenAI-compatible inference (GPU)
+- Stateless app containers + PVC/ConfigMap for `data/`, watchlists, secrets
 
 ## Non-Goals
 
@@ -88,11 +117,14 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 - No backtesting engine (v1)
 - No **PIA-hosted multi-tenant SaaS** (billing, per-user isolation, support) — single-operator deployments only unless explicitly expanded later
 - No mandatory cloud LLM — external API calls are **opt-in** (Phase 4.5); default is local or self-hosted vLLM
+- No Gemini provider in v1 (Anthropic + OpenAI-compatible only)
 - No public internet exposure by default (Phase 4 web binds to localhost; Phase 5 ingress is operator choice)
 
 ---
 
 ## Architecture
+
+Readable walkthrough with diagrams: [`docs/agent_architecture.md`](docs/agent_architecture.md).
 
 ### Two modes, one assistant
 
@@ -319,19 +351,20 @@ OLLAMA_MODEL=qwen3:8b     # default — fast Monitor runs, capable Advisor with 
 **Never instantiate chat models outside `src/llm.py`.**  
 **Never enable reasoning in Monitor pipeline nodes** (`news_analyst`, `discovery`, `analyst`).
 
-### Planned — Phase 4.5 provider abstraction
+### Phase 4.5 — Provider abstraction ✅
 
-- `PIA_LLM_PROVIDER` — `ollama` (default) | `vllm` | `openai` | `anthropic` | `google`
+- `PIA_LLM_PROVIDER` — `ollama` (default) | `anthropic` | `openai` (`vllm` / `openai-compatible` alias → OpenAI client)
 - Optional split: `PIA_LLM_MONITOR_PROVIDER`, `PIA_LLM_ADVISOR_PROVIDER` (e.g. Monitor on `ollama`, Advisor on `anthropic`)
 - Provider API keys in `.env` only; document that watchlist tickers, headlines, and signals are sent to the chosen provider when cloud is enabled
-- **Recommended no-GPU profile:** Monitor on a small/fast cloud or local model; Advisor on Claude/GPT/Gemini; or Advisor-only cloud with Monitor on cron + lightweight model
-- Ollama-specific flags (`reasoning`, `num_ctx`) apply only when the active backend supports them
+- **Recommended no-GPU profile:** Monitor on a small/fast cloud or local model; Advisor on Claude/GPT; or Advisor-only cloud with Monitor on cron + lightweight model
+- **No Gemini in v1** — Anthropic + OpenAI-compatible only
+- Ollama-specific flags (`reasoning`, `num_ctx`) apply only when the active backend is Ollama
 
-### Planned — Phase 5 vLLM
+### Planned — Phase 5 vLLM ✅ (see Phase 5a/5b)
 
-- vLLM serves an **OpenAI-compatible** `/v1/chat/completions` endpoint; PIA uses `LLM_BASE_URL` + model name (no Ollama daemon in the cluster)
-- GPU node pool (or single GPU server) runs vLLM; PIA pods are CPU-only and horizontally safe except Telegram polling (single replica or webhook)
-- Compose profile: `pia` + `vllm` services; K8s: vLLM `Deployment` + PIA `CronJob` / `Deployment`
+- vLLM serves an **OpenAI-compatible** `/v1/chat/completions` endpoint; PIA uses `OPENAI_BASE_URL` / `LLM_BASE_URL` + model name
+- GPU node pool (or single GPU server) runs vLLM; PIA pods are CPU-only; Telegram polling stays single replica
+- Compose profiles: stub / gpu; K8s: vLLM Deployment + PIA CronJob / Deployment
 
 ---
 
@@ -342,13 +375,20 @@ personal-investment-assistant/
 ├── pyproject.toml                # uv-managed dependencies
 ├── .env                          # secrets — never commit
 ├── .env.example                  # safe template to commit
-├── watchlist.yaml                # user-defined tickers — edit freely
+├── watchlists/                   # stock.yaml / etf.yaml / etc.yaml
 ├── SPEC.md                       # this file — source of truth
-├── deploy/                       # scheduling + Phase 5 K8s (planned)
+├── docs/                         # operator + architecture guides
+│   ├── agent_architecture.md
+│   ├── compose.md
+│   ├── kubernetes.md
+│   └── openshift.md
+├── deploy/                       # scheduling + K8s + OTEL
 │   ├── launchd/
 │   ├── systemd/
-│   └── k8s/                      # Phase 5 — manifests or Helm (planned)
-├── docker/                       # Phase 5 — Dockerfile, compose (planned)
+│   ├── otel/
+│   └── k8s/                      # Phase 5b — base + stub/gpu/cloud-only
+├── docker/                       # Phase 5a — Dockerfile, compose, llm-stub
+├── .agents/skills/               # runtime Agent Skills
 ├── logs/
 │   ├── app.log                   # application logs (RotatingFileHandler)
 │   ├── stdout.log                # service stdout (launchd / systemd)
@@ -1190,27 +1230,42 @@ PIA_WEB_TOKEN=
 
 **Phase 4 — Web application**
 
-- [ ] `uv run pia-web` serves UI on configured localhost port
-- [ ] Dashboard page mirrors `pia-console` data from `state.json`
-- [ ] Advisor chat page supports `/brief`-equivalent and free-form questions with streaming or progress indicator
-- [ ] Web app reuses `advisor_respond()` — no duplicated LLM logic
-- [ ] Bind to localhost by default; optional auth token if exposed beyond loopback
+- [x] `uv run pia-web` serves UI on configured localhost port
+- [x] Dashboard page mirrors `pia-console` data from `state.json` (sections by asset class)
+- [x] Advisor chat page supports `/brief`-equivalent and free-form questions with streaming or progress indicator
+- [x] Web app reuses `advisor_respond()` — no duplicated LLM logic
+- [x] Bind to localhost by default; optional auth token if exposed beyond loopback
+
+**Phase 4.1 — Asset classes, skills, telemetry**
+
+- [x] Separate `watchlists/{stock,etf,etc}.yaml`; signals carry `asset_class`
+- [x] Single Monitor LangGraph remains class-aware (not three pipelines)
+- [x] Runtime Agent Skills under `.agents/skills/` with auto-activation
+- [x] OTLP GenAI traces (`PIA_OTEL_ENABLED`); Aspire Dashboard docs under `deploy/otel/`
 
 **Phase 4.5 — Optional cloud LLM (BYOK)**
 
-- [ ] `PIA_LLM_PROVIDER=ollama` unchanged — existing behaviour
-- [ ] `PIA_LLM_ADVISOR_PROVIDER=anthropic` (or openai/google) answers `/ask` and `/brief` without Ollama
-- [ ] Monitor and Advisor can use different providers via `PIA_LLM_MONITOR_PROVIDER` / `PIA_LLM_ADVISOR_PROVIDER`
-- [ ] No API keys in logs; cloud use documented as sending watchlist/signals/headlines to third parties
-- [ ] `get_llm()` / `get_advisor_llm()` return `BaseChatModel` — nodes unchanged
+- [x] `PIA_LLM_PROVIDER=ollama` unchanged — existing behaviour
+- [x] `PIA_LLM_ADVISOR_PROVIDER=anthropic` (or openai) answers `/ask` and `/brief` without Ollama
+- [x] Monitor and Advisor can use different providers via `PIA_LLM_MONITOR_PROVIDER` / `PIA_LLM_ADVISOR_PROVIDER`
+- [x] No API keys in logs; cloud use documented as sending watchlist/signals/headlines to third parties
+- [x] `get_llm()` / `get_advisor_llm()` return traced LangChain chat models — nodes unchanged
 
-**Phase 5 — Containers and Kubernetes (vLLM)**
+**Phase 5a — Compose**
 
-- [ ] `docker compose up` runs PIA + vLLM with persistent `data/` volume
-- [ ] PIA reaches vLLM at `LLM_BASE_URL` (OpenAI-compatible); Monitor + Advisor complete against vLLM model
-- [ ] K8s manifests: PIA CronJob (Monitor), PIA Deployment (`pia-bot`), optional `pia-web`, vLLM Deployment on GPU nodes, PVC + Secrets
-- [ ] Telegram bot remains single-replica or webhook-based; documented uptime/energy expectations
-- [ ] Phase 4.5 cloud provider works inside containers (keys via Secrets) with no Ollama/vLLM pod required
+- [x] PIA Dockerfile + Compose (stub / gpu / bot / schedule profiles)
+- [x] `LLM_BASE_URL` / `VLLM_MODEL` aliases map to `OPENAI_*`
+- [x] Stub smoke: LLM client + `pia-run` persist `state.json`
+
+**Phase 5b — Kubernetes + vLLM**
+
+- [x] K8s manifests: CronJobs, pia-bot, pia-web, PVC, Secrets template, vLLM (gpu) / stub / cloud-only
+- [x] Service DNS `vllm:8000` stable across stub and GPU
+- [x] Operator docs: kind Layer 2 + GPU Layer 3 checklist (`deploy/k8s/README.md`)
+- [x] Telegram bot remains single-replica; documented in k8s README
+- [x] Cloud-only overlay works without vLLM pod
+
+**Phase 5 — Containers and Kubernetes (vLLM)** — see 5a/5b above
 
 ---
 
@@ -1382,14 +1437,14 @@ Browser  ←HTTP→  pia-web (FastAPI or Starlette)
 
 ---
 
-## Phase 4.5 — Optional Cloud LLM Providers (BYOK)
+## Phase 4.5 — Optional Cloud LLM Providers (BYOK) ✅
 
-Phase 4.5 adds **opt-in** commercial LLM APIs for operators who want guaranteed uptime on a **GPU-less server** (e.g. VPS with a Claude Pro / OpenAI / Gemini API subscription). **Local inference remains the default** for users with spare compute (Ollama on Mac, vLLM in Phase 5).
+Phase 4.5 adds **opt-in** commercial LLM APIs for operators who want guaranteed uptime on a **GPU-less server** (e.g. VPS with Anthropic or OpenAI API keys). **Local inference remains the default** for users with spare compute (Ollama on Mac, vLLM in Phase 5).
 
 ### Goals
 
-- Provider factory in `src/llm.py` — `get_llm()` and `get_advisor_llm()` return LangChain `BaseChatModel`
-- Support **Anthropic**, **OpenAI**, and **Google Gemini** via official LangChain integrations
+- Provider factory in `src/llm.py` — `get_llm()` and `get_advisor_llm()` return LangChain chat models
+- Support **Anthropic** and **OpenAI-compatible** APIs (no Gemini in v1)
 - Independent Monitor vs Advisor provider and model selection
 - Document data leaving the machine when cloud is enabled (watchlist symbols, RSS headlines, `state.json` signals)
 
@@ -1397,6 +1452,7 @@ Phase 4.5 adds **opt-in** commercial LLM APIs for operators who want guaranteed 
 
 - No PIA-operated API proxy or bundled API keys
 - No multi-tenant key management
+- No Gemini provider
 - No requirement to use cloud for Monitor (operator choice; cost warning in docs)
 
 ### Architecture
@@ -1407,84 +1463,98 @@ Monitor / Advisor nodes
         ▼
    src/llm.py  ──► PIA_LLM_*_PROVIDER
         ├── ollama  → ChatOllama (default)
-        ├── vllm    → ChatOpenAI(base_url=LLM_BASE_URL/v1)  [Phase 5]
         ├── anthropic → ChatAnthropic
-        ├── openai    → ChatOpenAI
-        └── google    → ChatGoogleGenerativeAI
+        └── openai / vllm / openai-compatible → ChatOpenAI (+ optional OPENAI_BASE_URL)
 ```
 
 ### Recommended deployment profiles
 
 | Profile | Monitor | Advisor | Hardware |
 |---|---|---|---|
-| **Home (default)** | Ollama | Ollama + reasoning | Mac / Linux with GPU or Apple Silicon |
-| **VPS + BYOK** | Small cloud model or Ollama remote | Claude / GPT / Gemini | No GPU; API cost |
+| **Home (default)** | Ollama | Ollama + optional reasoning | Mac / Linux with GPU or Apple Silicon |
+| **VPS + BYOK** | Small cloud model or Ollama remote | Claude / GPT | No GPU; API cost |
 | **K8s (Phase 5)** | vLLM small model | vLLM large model or cloud Advisor | GPU node pool + CPU PIA pods |
 
 ### Phase 4.5 build steps
 
-42. Refactor `src/llm.py` — provider enum, `BaseChatModel` factories, config in `src/config.py`
-43. Add optional dependencies (`langchain-anthropic`, `langchain-openai`, `langchain-google-genai`) as extras in `pyproject.toml`
-44. Map `max_tokens` / model IDs per provider; gate Ollama `reasoning` flag to Ollama backend only
-45. Update `/status`, web About, and README with active provider(s)
-46. Manual smoke tests — Phase 4.5 checklist
+42. Refactor `src/llm.py` — provider enum, factories, config in `src/config.py` ✅
+43. Add dependencies (`langchain-anthropic`, `langchain-openai`) in `pyproject.toml` ✅
+44. Map `max_tokens` / model IDs per provider; gate Ollama `reasoning` flag to Ollama backend only ✅
+45. Update web About and README with active provider(s) ✅
+46. Manual smoke tests — Phase 4.5 checklist ✅
 
 ---
 
-## Phase 5 — Portable Deployment (Docker, Kubernetes, vLLM)
+## Phase 5 — Portable Deployment (Docker, Kubernetes, vLLM) ✅
 
-Phase 5 packages PIA for **always-on servers** using containers. Self-hosted inference uses **[vLLM](https://docs.vllm.ai/)** as a dedicated OpenAI-compatible server — suitable for NVIDIA GPU hosts and Kubernetes GPU node pools. PIA does **not** embed the model; it calls `LLM_BASE_URL` like any other HTTP client.
+Operator guides:
+
+- Compose: [`docs/compose.md`](docs/compose.md)
+- Kubernetes: [`docs/kubernetes.md`](docs/kubernetes.md)
+- OpenShift + OpenShift AI (RHOAI vLLM serving): [`docs/openshift.md`](docs/openshift.md)
+
+Phase 5 packages PIA for **always-on servers** using containers. Self-hosted inference uses **[vLLM](https://docs.vllm.ai/)** as a dedicated OpenAI-compatible server — suitable for NVIDIA GPU hosts, Kubernetes GPU node pools, and OpenShift AI model serving. PIA does **not** embed the model; it calls `OPENAI_BASE_URL` / alias `LLM_BASE_URL` like any other HTTP client.
+
+Split into **5a** (Compose) then **5b** (Kubernetes).
 
 ### Goals
 
-- **Dockerfile** for PIA (CPU image) and **docker-compose** stack: `pia` + `vllm` + optional `pia-bot` / `pia-web`
-- **Kubernetes** manifests (or Helm chart): CronJobs for `pia-run`, Deployments for `pia-bot` and `pia-web`, vLLM `Deployment` with GPU requests, `PersistentVolumeClaim` for `data/`, `ConfigMap` for `watchlist.yaml`, `Secret` for tokens and API keys
-- vLLM configured with a served model (e.g. Qwen3-8B); PIA uses `LLM_BASE_URL=http://vllm:8000/v1` and `VLLM_MODEL` (or shared `OLLAMA_MODEL` alias for compatibility)
+- **Dockerfile** for PIA (CPU image) and Compose/Podman stack: `pia-web` + optional `pia-bot` / ofelia + stub or vLLM
+- **Kubernetes** raw manifests (no Helm in v1): CronJobs for `pia-run`, Deployments for `pia-bot` and `pia-web`, vLLM or stub as Service `vllm`, PVC for `data/`, ConfigMap for `watchlists/{stock,etf,etc}.yaml`, Secret for tokens
+- vLLM model via `VLLM_MODEL` / `OPENAI_MODEL`; aliases `LLM_BASE_URL` → `OPENAI_BASE_URL`
 - Document single-replica `pia-bot` (long polling) vs Telegram webhook behind Ingress
-- Works with Phase 4.5 cloud-only Advisor (no vLLM pod) for GPU-less clusters
+- Cloud-only overlay (Phase 4.5) without a vLLM pod
 
 ### Non-goals (Phase 5)
 
 - No managed PIA cloud product
 - No automatic model fine-tuning
 - No HA Telegram polling across replicas without webhook migration
+- No Helm chart in v1
 
 ### Architecture (Kubernetes)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  CronJob: pia-run (pre_market | midday | end_of_day)        │
-│  Deployment: pia-bot (replicas: 1)  │  pia-web (optional)   │
+│  Deployment: pia-bot (replicas: 1)  │  pia-web               │
 │       │                              │                      │
 │       └──────────────┬───────────────┘                      │
 │                      ▼                                      │
 │              PVC: data/state.json, advisor/history.json     │
-│              ConfigMap: watchlist.yaml                      │
+│              ConfigMap: watchlists/{stock,etf,etc}.yaml     │
 └──────────────────────────┬──────────────────────────────────┘
-                           │ LLM_BASE_URL
+                           │ LLM_BASE_URL / OPENAI_BASE_URL
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Deployment: vllm (GPU nodes)                               │
+│  Service/Deployment: vllm  (stub overlay OR GPU vLLM)       │
 │  OpenAI-compatible /v1/chat/completions                     │
 └─────────────────────────────────────────────────────────────┘
-         optional Phase 4.5: Advisor → external Claude/OpenAI API
+         optional: Advisor → external Claude/OpenAI API
 ```
 
 ### Phase 5 build steps
 
-47. `docker/Dockerfile` — multi-stage PIA image, non-root user, `uv` runtime
-48. `docker-compose.yml` — PIA services + vLLM with shared network and volumes
-49. `deploy/k8s/` — base manifests (namespace, secrets template, vllm, pia-run CronJobs, pia-bot)
-50. Health/readiness probes on `pia-web` and documented vLLM startup ordering
-51. Operator docs: GPU requirements, model weights volume, env matrix (Ollama vs vLLM vs cloud)
-52. Manual smoke tests — Phase 5 checklist
+**5a**
+
+47. `docker/Dockerfile` — multi-stage PIA image, non-root user, `uv` runtime ✅
+48. `docker/compose.yml` + stub/gpu overrides, ofelia, llm-stub ✅
+48a. `LLM_BASE_URL` / `VLLM_MODEL` aliases in `src/config.py` ✅
+48b. Stub smoke (`pia-run` → `state.json`) ✅
+
+**5b**
+
+49. `deploy/k8s/` — base + overlays stub / gpu / cloud-only ✅
+50. Health/readiness probes on `pia-web`; vLLM `/v1/models` ✅
+51. Operator docs: kind Layer 2 + GPU Layer 3 (`deploy/k8s/README.md`) ✅
+52. Manual smoke tests — Phase 5 checklist ✅
 
 ### Phase 5a vs 5b
 
-| Sub-phase | Deliverable |
-|---|---|
-| **5a** | Docker Compose on a single GPU server (simplest portable path) |
-| **5b** | Kubernetes / Helm for cluster operators |
+| Sub-phase | Deliverable | Status |
+|---|---|---|
+| **5a** | Docker/Podman Compose on a single host (stub or NVIDIA GPU) | ✅ |
+| **5b** | Kubernetes manifests for cluster operators | ✅ |
 
 ---
 
@@ -1499,7 +1569,7 @@ Phase 5 packages PIA for **always-on servers** using containers. Self-hosted inf
 - Never instantiate `ChatOllama` outside `src/llm.py`
 - Use `get_llm()` in Monitor nodes; use `get_advisor_llm()` only in `advisor.py`
 - Never enable `reasoning=True` in Monitor pipeline nodes
-- Never hardcode ticker symbols — always read from `watchlist.yaml`
+- Never hardcode ticker symbols — always read from `watchlists/`
 - Never hardcode secrets — always read from `.env` via `pydantic-settings`
 
 ---
@@ -1549,7 +1619,7 @@ Phase 5 packages PIA for **always-on servers** using containers. Self-hosted inf
 30. Install scripts `deploy/install-pia-bot-macos.sh` / `install-pia-bot-linux.sh` ✅ (service bootstrap deferred until operator runs script)
 31. Manual smoke tests — Phase 3 checklist ✅ (2026-06-03; `pia-bot` launchd/systemd install still operator step)
 
-**Phase 4 — Web application (browser UI)**
+**Phase 4 — Web application (browser UI)** ✅
 
 36. `src/web/` — FastAPI app + UI (`pia-web`)
 37. Dashboard page (Monitor state from `state.json`)
@@ -1558,21 +1628,34 @@ Phase 5 packages PIA for **always-on servers** using containers. Self-hosted inf
 40. Optional `pia-web` deploy service unit
 41. Manual smoke tests — Phase 4 checklist
 
-**Phase 4.5 — Optional cloud LLM (BYOK)**
+**Phase 4.1 — Asset classes, skills, telemetry** ✅
+
+41a. `watchlists/{stock,etf,etc}.yaml` + `asset_class` through state/signals
+41b. Single class-aware Monitor graph (not three pipelines)
+41c. Runtime Agent Skills (`.agents/skills/`) + Advisor/Monitor auto-activation
+41d. OTLP GenAI telemetry + Aspire Dashboard Podman docs
+41e. Dashboard / console / notifier sections by asset class
+
+**Phase 4.5 — Optional cloud LLM (BYOK)** ✅
 
 42. Provider factory in `src/llm.py` + config
-43. LangChain provider extras in `pyproject.toml`
+43. LangChain Anthropic / OpenAI deps in `pyproject.toml`
 44. Per-provider model IDs and Monitor/Advisor split
-45. Docs and status surfaces for active provider
+45. Docs and About page for active provider
 46. Manual smoke tests — Phase 4.5 checklist
 
-**Phase 5 — Docker, Kubernetes, vLLM**
+**Phase 5a — Docker / Podman Compose** ✅
 
-47. PIA Dockerfile + Compose with vLLM
-48. K8s manifests (CronJob, Deployments, PVC, Secrets, vLLM GPU Deployment)
-49. OpenAI-compatible client path via `LLM_BASE_URL`
-50. Operator documentation and probes
-51. Manual smoke tests — Phase 5 checklist
+47. PIA Dockerfile + Compose (stub / gpu / bot / schedule)
+48. `LLM_BASE_URL` / `VLLM_MODEL` aliases; llm-stub image
+48b. Stub smoke — Monitor against OpenAI-compatible stub
+
+**Phase 5b — Kubernetes + vLLM** ✅
+
+49. `deploy/k8s/` base + stub / gpu / cloud-only overlays
+50. Probes, CronJobs, single-replica pia-bot
+51. Operator docs (kind Layer 2 + GPU Layer 3)
+52. Manual smoke checklist
 
 ---
 
@@ -1616,4 +1699,7 @@ dependencies = [
 - [vLLM docs](https://docs.vllm.ai/)
 - [Anthropic API](https://docs.anthropic.com/)
 - [OpenAI API](https://platform.openai.com/docs/)
-- [Google Gemini API](https://ai.google.dev/gemini-api/docs)
+- [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
+- [OpenAI Chat Completions](https://platform.openai.com/docs/api-reference/chat)
+- [OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai)
+- [Agent Skills specification](https://agentskills.io/specification)
