@@ -8,8 +8,8 @@ This document explains the LangGraph **Monitor** pipeline and the separate **Adv
 
 | Mode | Trigger | LLM role | Purpose |
 |------|---------|----------|---------|
-| **Monitor** | Schedule / Refresh / `pia-run` | Fast structured calls (`get_llm()`, reasoning off on Ollama) | Detect changes, score news, emit alerts |
-| **Advisor** | Web / Telegram / CLI on demand | Deliberative (`get_advisor_llm()`) | Interpret signals, answer questions, daily brief |
+| **Monitor** | Schedule / Refresh / `pia-run` | Fast structured calls (`get_llm()`, reasoning off on Ollama); **no** `@tool` | Detect changes, score news, emit alerts |
+| **Advisor** | Web / Telegram / CLI on demand | Deliberative (`get_advisor_llm()`) + optional **tool calls** (`get_quote`) | Interpret signals, answer questions, daily brief |
 
 ```mermaid
 flowchart TB
@@ -22,8 +22,10 @@ flowchart TB
   subgraph advisorMode [Advisor]
     ui[Web_Telegram_CLI]
     advisor[advisor_respond]
+    tools[get_quote_tool]
     ui --> advisor
     stateFile --> advisor
+    advisor -->|"bind_tools"| tools
   end
   skills[.agents_skills]
   skills --> graph
@@ -65,7 +67,7 @@ flowchart LR
   supervisor -->|skipped| endNode[END]
 ```
 
-The supervisor uses the market calendar ([`src/tools/market_calendar.py`](../src/tools/market_calendar.py)). When `skipped` is set, workers do not run.
+The supervisor uses the market calendar ([`src/tools/market_calendar.py`](../src/tools/market_calendar.py)). When `skipped` is set, workers do not run. **Manual** runs (`run_type=manual`, including dashboard Refresh) bypass the calendar so operators can refresh last available data on weekends/holidays. Skipped *scheduled* runs preserve prior signals in `state.json` instead of wiping them.
 
 ### Parallel fan-out
 
@@ -110,27 +112,62 @@ flowchart TB
 - News queries are biased by class (company name vs ETF vs commodity wording).
 - Dashboard, console, and notifications present **sections per class**.
 
-## Advisor path (not in the LangGraph)
+## Advisor path (not in the Monitor LangGraph)
 
-Advisor does **not** run inside the Monitor graph. It reads the latest `state.json` and may fetch live quotes, headlines, optional fundamentals, and indicator scans.
+Advisor does **not** run inside the Monitor graph. It reads the latest `state.json`, may fetch headlines / optional fundamentals / indicator scans in Python, then calls `get_advisor_llm()` in a **tool-calling loop** so the model can request live data.
+
+Monitor still does **not** use LangChain `@tool` — its helpers under `src/tools/` are plain Python functions invoked by graph nodes.
 
 ```mermaid
 flowchart TB
   ask[User_ask_or_brief]
   resolve[resolve_targets_skills]
-  fetch[Quotes_news_optional_scan]
-  llmAdv[get_advisor_llm]
-  ask --> resolve --> fetch --> llmAdv
-  stateFile[data_state.json] --> llmAdv
+  fetch[News_optional_scan_fundamentals]
+  loop[invoke_with_tools]
+  ask --> resolve --> fetch --> loop
+  stateFile[data_state.json] --> loop
   skills[.agents_skills] --> resolve
+  getQuote[get_quote_tool]
+  loop -->|"model_tool_call"| getQuote
+  getQuote -->|"ToolMessage_JSON"| loop
+  loop --> answer[Final_text_answer]
 ```
 
 | Surface | Entry |
 |---------|--------|
 | Core | [`src/nodes/advisor.py`](../src/nodes/advisor.py) `advisor_respond()` |
-| Web | [`src/web/advisor_service.py`](../src/web/advisor_service.py) SSE |
-| Telegram | [`src/main.py`](../src/main.py) + [`src/bot/telegram_handlers.py`](../src/bot/telegram_handlers.py) |
+| Tool loop | [`src/advisor_tool_loop.py`](../src/advisor_tool_loop.py) `invoke_with_tools()` |
+| Web | [`src/web/advisor_service.py`](../src/web/advisor_service.py) SSE — logs on **`pia-web`** |
+| Telegram | [`src/main.py`](../src/main.py) + [`src/bot/telegram_handlers.py`](../src/bot/telegram_handlers.py) — logs on **`pia-bot`** |
 | CLI | `uv run pia-advisor` |
+
+### Tools the Advisor model can call
+
+When `ADVISOR_FETCH_QUOTES=true` (default), Advisor binds LangChain tools via `llm.bind_tools(...)` and runs until the model returns a final text message (or max rounds). The same path works for **Ollama** (tool-capable models), **Anthropic**, and **OpenAI** / OpenAI-compatible (`vllm`) through [`src/llm.py`](../src/llm.py).
+
+| Tool | Definition | When the model should call it | Returns |
+|------|------------|-------------------------------|---------|
+| `get_quote` | [`src/tools/quote_tool.py`](../src/tools/quote_tool.py) `@tool` | Needs live price, daily change %, volume, or currency for a ticker | JSON string (`ticker`, `price`, `change_pct`, `volume`, `currency`, `as_of`) |
+
+Live quotes are **not** pre-fetched into the prompt anymore when the tool is enabled — the model must call `get_quote`. Look for log lines `Advisor tool round N: get_quote`.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Advisor as advisor_respond
+  participant LLM as get_advisor_llm
+  participant Tool as get_quote
+  User->>Advisor: ask_or_brief
+  Advisor->>LLM: system_plus_context_plus_tools
+  LLM-->>Advisor: tool_calls_get_quote
+  Advisor->>Tool: ticker
+  Tool-->>Advisor: quote_JSON
+  Advisor->>LLM: ToolMessage
+  LLM-->>Advisor: final_plain_text
+  Advisor-->>User: answer
+```
+
+Set `ADVISOR_FETCH_QUOTES=false` to disable the tool (no live quotes). If `bind_tools` fails for a given backend, Advisor falls back to a plain invoke without tools.
 
 ### Skills
 
@@ -145,12 +182,12 @@ Shared catalog: `stock-analysis`, `etf-analysis`, `etc-analysis`, `market-techni
 
 ### Daily brief structure
 
-`/brief` prompts the model to emit separate markdown sections:
+`/brief` prompts the model for compact plain-text labels (not markdown headings):
 
-1. Stocks  
-2. ETFs  
-3. ETCs (omit if watchlist empty)  
-4. Cross-class themes (short)
+1. `STOCKS`
+2. `ETFS`
+3. `ETCS` (omit if watchlist empty)
+4. `THEMES` (short cross-class bullets, or `None.`)
 
 Context is grouped by `asset_class` before the LLM call so classes are not mixed into one soup.
 

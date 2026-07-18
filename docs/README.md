@@ -17,7 +17,7 @@ When you change any of the following, update the matching file under `docs/` in 
 
 | Change area | Update |
 |-------------|--------|
-| Monitor graph, nodes, state, skills, Advisor prompts | `agent_architecture.md` |
+| Monitor graph, nodes, state, skills, Advisor prompts / tools | `agent_architecture.md` |
 | Compose files, profiles, Ofelia, host Ollama URLs | `compose.md` |
 | `deploy/k8s/` manifests, CronJobs, overlays | `kubernetes.md` |
 | OpenShift Routes, RHOAI / InferenceService wiring | `openshift.md` |

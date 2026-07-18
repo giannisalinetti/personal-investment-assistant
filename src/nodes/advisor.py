@@ -21,11 +21,12 @@ from src.advisor_scan import (
 )
 from src.config import ASSET_CLASS_LABELS, WatchlistEntry, settings
 from src.tools.ticker_extract import extract_adhoc_tickers
+from src.advisor_tool_loop import invoke_with_tools
 from src.llm import get_advisor_llm
 from src.state_persistence import stale_state_warning
 from src.tools.fundamentals_tool import fetch_fundamentals_batch
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
-from src.tools.quote_tool import fetch_quotes
+from src.tools.quote_tool import get_quote
 from src.skills import activated_skill_names, format_skills_block, select_skills
 from src.telemetry import start_span
 
@@ -370,15 +371,6 @@ async def _fetch_valuation_metrics(
     return fundamentals, errors
 
 
-async def _fetch_live_quotes(entries: list[WatchlistEntry]) -> tuple[dict[str, dict], list[str]]:
-    if not settings.ADVISOR_FETCH_QUOTES or not entries:
-        return {}, []
-    tickers = [entry.ticker for entry in entries]
-    quotes, errors = await fetch_quotes(tickers)
-    logger.info("Advisor live quotes: %s", list(quotes))
-    return quotes, errors
-
-
 def _yahoo_finance_url(ticker: str) -> str:
     return f"https://finance.yahoo.com/quote/{ticker}"
 
@@ -488,10 +480,12 @@ def _build_prompt(
         "- Indicator scan results include a pre-computed exact_leader — always state that ticker and value\n"
         "- On-demand analysis covers explicitly mentioned tickers outside the watchlist\n"
         "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Valuation metrics, "
-        "Live quotes, Fresh headlines, and activated Skills\n"
+        "Fresh headlines, activated Skills, and live quotes from tools\n"
+        "- When you need a live price or daily change, call the get_quote tool "
+        "(works the same for local Ollama tool-capable models and cloud SOTA providers)\n"
         "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for stock expensive/cheap questions only\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
-        "- Do not invent prices, RSI, P/E, PEG values, or headlines not present in the context\n"
+        "- Do not invent prices, RSI, P/E, PEG values, or headlines not present in the context or tool results\n"
         "- Note when P/E or PEG is unavailable (common for ETFs/ETCs); do not substitute guesses\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
@@ -531,7 +525,11 @@ def _build_prompt(
         format_on_demand_block(on_demand),
         "",
         "=== Live quotes ===",
-        _format_live_quotes_block(live_quotes),
+        (
+            "Not pre-fetched. Call get_quote(ticker) when you need live prices."
+            if settings.ADVISOR_FETCH_QUOTES
+            else _format_live_quotes_block(live_quotes)
+        ),
         "",
         "=== Valuation metrics (Advisor only) ===",
         _format_valuation_block(valuation),
@@ -555,8 +553,29 @@ def _build_prompt(
     return "\n".join(parts)
 
 
+def _split_advisor_prompt(prompt: str) -> tuple[str, str]:
+    """Split combined prompt into system + user for tool-calling chat APIs."""
+    marker = "\n=== Activated skills ===\n"
+    if marker in prompt:
+        system, rest = prompt.split(marker, 1)
+        return system.strip(), f"=== Activated skills ===\n{rest}".strip()
+    return (
+        "You are a personal investment advisor assistant.",
+        prompt.strip(),
+    )
+
+
 def _invoke_advisor_sync(prompt: str) -> str:
     llm = get_advisor_llm()
+    system, user = _split_advisor_prompt(prompt)
+    if settings.ADVISOR_FETCH_QUOTES:
+        return invoke_with_tools(
+            llm,
+            system=system,
+            user=user,
+            tools=[get_quote],
+            max_rounds=8 if "=== Task ===" in user else 6,
+        )
     response = llm.invoke(prompt)
     return str(response.content if hasattr(response, "content") else response).strip()
 
@@ -586,13 +605,13 @@ async def advisor_respond(
         else:
             entries, on_demand, scan = resolved
         link_entries = entries or _entries_mentioned_in_text(question, watchlist)
-        quote_entries = link_entries if settings.ADVISOR_FETCH_QUOTES else []
+        # Live quotes are model-driven via get_quote when ADVISOR_FETCH_QUOTES=true.
+        quote_errors: list[str] = []
 
         t0 = time.perf_counter()
         with start_span("pia.advisor.fetch"):
-            headlines_result, quotes_result, valuation_result = await asyncio.gather(
+            headlines_result, valuation_result = await asyncio.gather(
                 _fetch_fresh_headlines(entries),
-                _fetch_live_quotes(quote_entries),
                 _fetch_valuation_metrics(
                     mode=mode,
                     question=question,
@@ -602,7 +621,7 @@ async def advisor_respond(
             )
         fetch_seconds = time.perf_counter() - t0
         fresh_headlines, fetch_errors = headlines_result
-        live_quotes, quote_errors = quotes_result
+        live_quotes: dict[str, dict] = {}
         valuation, fundamentals_errors = valuation_result
 
         skills = select_skills(

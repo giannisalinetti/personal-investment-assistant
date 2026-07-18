@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
 import yfinance as yf
+from langchain_core.tools import tool
 
 from src.tools.yfinance_tool import YFINANCE_CACHE_DIR
 
@@ -54,6 +56,26 @@ def _fetch_quote_sync(ticker: str) -> dict | None:
         "currency": currency or "USD",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@tool
+def get_quote(ticker: str) -> str:
+    """Fetch a live market quote for one ticker symbol (e.g. AAPL, VWCE.DE, 4GLD.DE).
+
+    Call this when you need the current price, daily change %, volume, or currency.
+    Do not invent prices — use this tool instead. Returns JSON text.
+    """
+    symbol = ticker.strip().upper()
+    if not symbol:
+        return json.dumps({"error": "ticker is required"})
+    try:
+        quote = _fetch_quote_sync(symbol)
+    except Exception as exc:
+        logger.warning("%s: get_quote failed: %s", symbol, exc)
+        return json.dumps({"ticker": symbol, "error": str(exc)})
+    if quote is None:
+        return json.dumps({"ticker": symbol, "error": "quote unavailable"})
+    return json.dumps(quote, ensure_ascii=False)
 
 
 async def fetch_quote(ticker: str) -> dict | None:

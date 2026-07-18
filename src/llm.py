@@ -149,5 +149,15 @@ class _TracedChatModel:
             )
             return self._inner.invoke(input, config=config, **kwargs)
 
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "_TracedChatModel":
+        """Preserve OTEL wrapping after LangChain tool binding."""
+        bound = self._inner.bind_tools(tools, **kwargs)
+        return _TracedChatModel(
+            bound,
+            provider=self._provider,
+            model=self._model,
+            role=self._role,
+        )
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
