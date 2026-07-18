@@ -17,10 +17,23 @@ def supervisor_node(state: AgentState) -> dict:
     Sets ``skipped=True`` when every exchange mapped from the watchlist is
     closed for today (weekends and exchange holidays). LangGraph routes to END
     without running market_data or analyst when skipped.
+
+    Manual runs (dashboard Refresh / ``pia-run --run-type manual``) always
+    proceed so operators can refresh last available market data on closed days.
     """
     entries = load_watchlist()
     tickers = [entry.ticker for entry in entries]
     run_type = state.get("run_type", "unknown")
+
+    if run_type == "manual":
+        logger.info(
+            "Supervisor: run_type=manual watchlist=%s skipped=False (calendar bypass)",
+            tickers,
+        )
+        return {
+            "watchlist": tickers,
+            "skipped": False,
+        }
 
     skipped, reason, open_by_exchange = should_skip_run(entries)
 

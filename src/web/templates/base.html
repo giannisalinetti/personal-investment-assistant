@@ -17,13 +17,15 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,650&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=6">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="site-header">
-    <div class="brand">PIA</div>
+    <a class="brand" href="/{{ token_query }}" aria-label="PIA">
+      <img src="/static/pia.png" alt="PIA" class="brand-logo" width="96" height="40">
+    </a>
     <nav>
       <a href="/{{ token_query }}" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
       <a href="/advisor{{ token_query }}" class="{% if active == 'advisor' %}active{% endif %}">Advisor</a>
@@ -37,7 +39,7 @@
   <footer class="site-footer">
     <p class="disclaimer">{{ disclaimer }}</p>
   </footer>
-  <script src="/static/common.js?v=5"></script>
+  <script src="/static/common.js?v=6"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -106,24 +106,22 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     state = load_state()
-    next_runs = "\n".join(f"  • {name}: {time}" for name, time in NEXT_RUNS.items())
     if state is None:
-        last_run_line = "No Monitor run yet"
-        signals_line = "Signals: —"
+        last_run_line = "no run yet"
+        signals_line = "signals —"
     else:
         last_run_line = f"{state.get('last_run', 'unknown')} ({state.get('run_type', 'manual')})"
-        signals_line = f"Signals: {len(state.get('signals', []))}"
+        signals_line = f"signals {len(state.get('signals', []))}"
         warning = stale_state_warning(state)
         if warning:
-            last_run_line = f"{last_run_line}\n⚠️ {warning}"
+            last_run_line = f"{last_run_line}; {warning}"
 
+    next_runs = ", ".join(f"{name} {time}" for name, time in NEXT_RUNS.items())
     msg = (
-        "🤖 Personal Investment Assistant — Advisor daemon\n\n"
-        f"⏱ Next Monitor runs ({settings.TIMEZONE}):\n{next_runs}\n\n"
-        f"🧠 Model: {settings.OLLAMA_MODEL}\n"
-        f"📋 Watchlist: {len(load_watchlist())} tickers\n"
-        f"🕐 Last Monitor run: {last_run_line}\n"
-        f"{signals_line}"
+        f"PIA Advisor — {settings.TIMEZONE}\n"
+        f"Next: {next_runs}\n"
+        f"Model: {settings.OLLAMA_MODEL} | Watchlist: {len(load_watchlist())}\n"
+        f"Last: {last_run_line} | {signals_line}"
     )
     await update.message.reply_text(msg)
 
@@ -142,7 +140,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if update.message is None:
         return
-    await update.message.reply_text("🛑 Shutting down Personal Investment Assistant advisor daemon…")
+    await update.message.reply_text("Shutting down PIA Advisor…")
     logger.info("Stop requested via Telegram")
     context.application.stop_running()
 
@@ -156,8 +154,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Telegram is not fully configured in .env")
         return
     await update.message.reply_text(
-        f"{DISCLAIMER}\n\n"
-        "Personal Investment Assistant advisor is running.\n"
-        "Commands: /brief  /ask <question>  /clear  /status  /stop"
+        f"{DISCLAIMER}\n"
+        "PIA Advisor ready. /brief /ask /clear /status /stop"
     )
     context.application.bot_data[_DISCLAIMER_SHOWN_KEY] = True

@@ -41,7 +41,7 @@ html { color-scheme: light dark; }
 
 body {
   margin: 0;
-  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+  font-family: Barlow, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.55;
@@ -49,9 +49,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, .brand {
-  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
-  font-weight: 560;
+h1, h2, h3 {
+  font-family: Barlow, "Segoe UI", sans-serif;
+  font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.25;
 }
@@ -67,9 +67,24 @@ h1, h2, h3, .brand {
 }
 
 .brand {
-  font-weight: 650;
-  font-size: 1.35rem;
-  color: var(--text);
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  line-height: 0;
+  flex-shrink: 0;
+  padding: 0.15rem 0.35rem;
+  border-radius: 6px;
+  background: #f2f3f5;
+}
+
+[data-theme="dark"] .brand {
+  background: #e8eaed;
+}
+
+.brand-logo {
+  height: 36px;
+  width: auto;
+  display: block;
 }
 
 .site-header nav {
@@ -342,7 +357,7 @@ h2 { font-size: 1.2rem; margin-top: 1.75rem; margin-bottom: 0.65rem; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
-  font-family: "Source Sans 3", sans-serif;
+  font-family: Barlow, "Segoe UI", sans-serif;
 }
 
 .sidebar-empty { margin: 0.5rem 0; font-size: 0.85rem; }

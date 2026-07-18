@@ -8,8 +8,6 @@ import logging
 import re
 import time
 
-from urllib.parse import quote
-
 from src.advisor_on_demand import (
     analyze_adhoc_tickers,
     build_adhoc_entries,
@@ -35,22 +33,21 @@ logger = logging.getLogger(__name__)
 
 _CLASS_ORDER = ("stock", "etf", "etc")
 
-BRIEF_PROMPT = """Produce a daily brief for my watchlist.
+BRIEF_PROMPT = """Produce a compact daily brief for my watchlist.
 
-You MUST structure the reply with these markdown headings, in order:
-## Stocks
-## ETFs
-## ETCs
-## Cross-class themes
+Structure with these plain labels only (no markdown # headings, no **bold**, no [links](url)):
+STOCKS
+ETFS
+ETCS
+THEMES
 
-Rules for sections:
-- Under each asset-class heading, discuss ONLY that class (signals, headlines, what to watch).
-- If the context says a class is empty / not on the watchlist, omit that heading entirely.
-- Do not mix tickers from different classes inside Stocks / ETFs / ETCs sections.
-- ## Cross-class themes: at most 2–3 short bullets for themes that genuinely span classes; otherwise write "None."
-
-Also cover for each included class: conflicts or alignments in signals, and what to watch before the next Monitor run.
-Use Monitor data and fresh headlines below. Cite specific headlines when explaining recent moves. State assumptions explicitly."""
+Rules:
+- Under each class label, discuss ONLY that class in short bullets (1–4 bullets).
+- If a class is empty / not on the watchlist, omit that label entirely.
+- Do not mix tickers from different classes inside STOCKS / ETFS / ETCS.
+- THEMES: at most 2–3 short bullets spanning classes; otherwise write "None."
+- Keep the whole brief tight — no essays, no repeated data dumps.
+- Cite specific headlines when explaining recent moves. State assumptions briefly."""
 
 
 _RECENT_NEWS_HINTS = re.compile(
@@ -386,22 +383,18 @@ def _yahoo_finance_url(ticker: str) -> str:
     return f"https://finance.yahoo.com/quote/{ticker}"
 
 
-def _google_news_search_url(ticker: str, company_name: str) -> str:
-    query = quote(f"{ticker} stock")
-    return f"https://news.google.com/search?q={query}&hl=en-US&gl=US&ceid=US:en"
-
-
 def format_useful_links_section(
     *,
     fresh_headlines: dict[str, list[dict]],
     entries: list[WatchlistEntry],
-    max_headline_links: int = 6,
+    max_headline_links: int = 3,
+    max_quote_tickers: int = 3,
 ) -> str | None:
-    """Build a footer with headline URLs and quote/news search links."""
+    """Build a compact footer with headline and quote links."""
     if not fresh_headlines and not entries:
         return None
 
-    lines = ["📎 Useful links"]
+    lines = ["LINKS"]
     headline_links: list[tuple[str, str]] = []
     seen_urls: set[str] = set()
 
@@ -412,29 +405,20 @@ def format_useful_links_section(
                 continue
             seen_urls.add(url)
             title = str(article.get("title", ticker)).strip()
-            if len(title) > 90:
-                title = f"{title[:87]}…"
+            if len(title) > 70:
+                title = f"{title[:67]}…"
             headline_links.append((title, url))
             if len(headline_links) >= max_headline_links:
                 break
         if len(headline_links) >= max_headline_links:
             break
 
-    if headline_links:
-        lines.append("")
-        lines.append("Headlines")
-        for title, url in headline_links:
-            lines.append(f"  • {title}")
-            lines.append(f"    {url}")
+    for title, url in headline_links:
+        lines.append(f"• {title} — {url}")
 
     if entries:
-        lines.append("")
-        lines.append("Charts & further reading")
-        for entry in entries:
-            lines.append(f"  • {entry.ticker} quote — {_yahoo_finance_url(entry.ticker)}")
-            lines.append(
-                f"  • {entry.ticker} news — {_google_news_search_url(entry.ticker, entry.name)}"
-            )
+        for entry in entries[:max_quote_tickers]:
+            lines.append(f"• {entry.ticker} quote — {_yahoo_finance_url(entry.ticker)}")
 
     if len(lines) == 1:
         return None
@@ -511,7 +495,8 @@ def _build_prompt(
         "- Note when P/E or PEG is unavailable (common for ETFs/ETCs); do not substitute guesses\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
-        "- Be concise — lead with the direct answer, then supporting detail"
+        "- Be compact: for /ask lead with 1–3 sentences, then at most 5 short bullets\n"
+        "- Plain text only — no markdown headings (##), no **bold**, no [markdown](links)"
     )
     prompt_state = _state_for_prompt(state, mode=mode, question=question, watchlist=watchlist)
     watchlist_block = watchlist
@@ -673,41 +658,24 @@ async def advisor_respond(
 
     prefix_parts: list[str] = []
     if warning:
-        prefix_parts.append(f"⚠️ {warning}")
-    if fetch_errors:
-        prefix_parts.append("⚠️ Some headline feeds failed: " + "; ".join(fetch_errors[:3]))
-    if quote_errors:
-        prefix_parts.append("⚠️ Some quote fetches failed: " + "; ".join(quote_errors[:3]))
-    if fundamentals_errors:
-        prefix_parts.append(
-            "⚠️ Some valuation metric fetches failed: " + "; ".join(fundamentals_errors[:3])
-        )
-    if on_demand and on_demand.get("signals"):
-        tickers = ", ".join(on_demand["tickers"])
-        prefix_parts.append(f"ℹ️ On-demand analysis fetched for {tickers}.")
+        prefix_parts.append(f"⚠ {warning}")
+    hard_errors = [
+        *fetch_errors[:2],
+        *quote_errors[:2],
+        *fundamentals_errors[:2],
+    ]
     if on_demand and on_demand.get("errors"):
-        prefix_parts.append(
-            "⚠️ On-demand analysis errors: " + "; ".join(on_demand["errors"][:3])
-        )
-    if scan:
-        prefix_parts.append(
-            f"ℹ️ Indicator scan complete — {scan.leader.ticker} has the "
-            f"{'highest' if scan.direction == 'highest' else 'lowest'} "
-            f"{scan.metric_label} ({scan.leader.value:.1f}) in scan universe."
-        )
-    if entries and not any(fresh_headlines.values()):
-        prefix_parts.append(
-            f"⚠️ No headlines found in the last {settings.ADVISOR_NEWS_WINDOW_HOURS}h "
-            f"for {', '.join(e.ticker for e in entries)}."
-        )
+        hard_errors.extend(on_demand["errors"][:2])
+    if hard_errors:
+        prefix_parts.append("⚠ " + "; ".join(hard_errors[:4]))
 
     if prefix_parts:
-        answer = "\n\n".join(prefix_parts) + "\n\n" + answer
+        answer = "\n".join(prefix_parts) + "\n\n" + answer
 
     if scan:
-        answer = f"{answer.rstrip()}\n\n---\n\n{scan.exact_answer_block()}"
+        answer = f"{answer.rstrip()}\n\n{scan.exact_answer_block()}"
 
     links = format_useful_links_section(fresh_headlines=fresh_headlines, entries=link_entries)
     if links:
-        answer = f"{answer.rstrip()}\n\n---\n\n{links}"
+        answer = f"{answer.rstrip()}\n\n{links}"
     return answer

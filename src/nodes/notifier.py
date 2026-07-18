@@ -25,7 +25,8 @@ def format_suggestion_line(item: dict) -> str:
     class_tag = f" [{asset_class}]" if asset_class else ""
     label = f"{ticker} — {name}" if name and name.upper() != ticker else ticker
     if reason:
-        return f"  {label}{class_tag} — {reason}"
+        short = reason if len(reason) <= 100 else f"{reason[:97]}…"
+        return f"  {label}{class_tag} — {short}"
     return f"  {label}{class_tag}"
 
 
@@ -52,10 +53,21 @@ def should_notify(state: AgentState) -> bool:
     return False
 
 
+def _short_rationale(text: str, limit: int = 120) -> str:
+    body = " ".join(str(text).split())
+    if len(body) <= limit:
+        return body
+    return f"{body[: limit - 1]}…"
+
+
+def _confidence_short(confidence: str) -> str:
+    return {"HIGH": "HI", "MEDIUM": "MED", "LOW": "LO"}.get(confidence, confidence)
+
+
 def format_notification(state: AgentState) -> str:
-    """Build the human-readable notification body, grouped by asset class."""
+    """Build a compact notification body, grouped by asset class."""
     run_type = state.get("run_type", "manual")
-    lines = [f"📊 Market Update — {run_type}"]
+    lines = [f"Market Update — {run_type}"]
 
     notifiable = [signal for signal in state.get("signals", []) if _is_notifiable_signal(signal)]
     shown = 0
@@ -67,36 +79,37 @@ def format_notification(state: AgentState) -> str:
         ]
         if not class_signals:
             continue
-        lines.append(f"\n— {ASSET_CLASS_LABELS.get(asset_class, asset_class)} —")
+        lines.append(ASSET_CLASS_LABELS.get(asset_class, asset_class))
         for signal in class_signals:
             if shown >= settings.MAX_TICKERS_PER_NOTIFICATION:
                 break
             emoji = {"BUY": "🟢", "SELL": "🔴", "WATCH": "🟡"}.get(signal["signal"], "⚪")
-            lines.append(
-                f"\n{emoji} {signal['ticker']} — {signal['signal']} "
-                f"({signal['confidence']} confidence)\n{signal['rationale']}"
-            )
+            conf = _confidence_short(str(signal.get("confidence", "")))
+            rationale = _short_rationale(signal.get("rationale", ""))
+            line = f"{emoji} {signal['ticker']} {signal['signal']} {conf}"
+            if rationale:
+                line = f"{line} — {rationale}"
+            lines.append(line)
             shown += 1
         if shown >= settings.MAX_TICKERS_PER_NOTIFICATION:
             break
 
     if len(notifiable) > settings.MAX_TICKERS_PER_NOTIFICATION:
         lines.append(
-            f"\n… truncated {len(notifiable) - settings.MAX_TICKERS_PER_NOTIFICATION} "
-            "additional signals"
+            f"… +{len(notifiable) - settings.MAX_TICKERS_PER_NOTIFICATION} more"
         )
 
     watchlist_note = state.get("watchlist_note")
     if watchlist_note:
-        lines.append(f"\n📋 Watchlist note:\n{watchlist_note}")
+        lines.append(f"Note: {_short_rationale(watchlist_note, 160)}")
 
     suggestions = state.get("suggestions", [])
     if suggestions:
-        lines.append("\n💡 Related instruments to watch:")
+        lines.append("Related:")
         for item in suggestions:
-            lines.append(format_suggestion_line(item))
+            lines.append(format_suggestion_line(item).strip())
 
-    lines.append(f"\n{DISCLAIMER}")
+    lines.append(DISCLAIMER)
     return "\n".join(lines)
 
 

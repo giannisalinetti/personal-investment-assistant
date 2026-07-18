@@ -138,10 +138,35 @@ def state_to_document(state: AgentState) -> dict:
     }
 
 
+_PRESERVE_ON_SKIP = (
+    "signals",
+    "suggestions",
+    "watchlist_note",
+    "ticker_details",
+    "errors",
+    "notification_sent",
+)
+
+
 def persist_state(state: AgentState) -> Path:
-    """Write state atomically so readers never see a partial file."""
+    """Write state atomically so readers never see a partial file.
+
+    When the run is skipped (markets closed), keep the previous analysis fields
+    so a weekend/holiday skip does not wipe the last successful Monitor output.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     document = state_to_document(state)
+
+    if document.get("skipped"):
+        previous = load_state()
+        if previous and not previous.get("skipped"):
+            for key in _PRESERVE_ON_SKIP:
+                if key in previous:
+                    document[key] = previous[key]
+            logger.info(
+                "Skipped run — preserved prior signals/suggestions from last successful state"
+            )
+
     payload = json.dumps(document, indent=2, ensure_ascii=False)
     payload = f"{payload}\n"
 
