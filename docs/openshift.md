@@ -157,8 +157,8 @@ Or copy `deploy/k8s/base` into a cluster-specific overlay that:
 
 ### Shared storage
 
-- PVC for `/app/data` (and logs) shared by CronJob Jobs, `pia-web`, and `pia-bot` (same pattern as [kubernetes.md](kubernetes.md)).
-- Watchlists via ConfigMap mount at `/app/watchlists`.
+- PVC for `/app/data` (and logs) shared by CronJob Jobs, `pia-web`, and `pia-bot` (same pattern as [kubernetes.md](kubernetes.md)). UI watchlist overrides are stored here as `watchlists_override.json`.
+- Watchlists via ConfigMap mount at `/app/watchlists` (typically read-only defaults).
 
 ### Route for the web UI
 

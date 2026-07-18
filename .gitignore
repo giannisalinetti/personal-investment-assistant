@@ -10,5 +10,6 @@ build/
 .cache/
 data/state.json
 data/advisor/history.json
+data/watchlists_override.json
 logs/*.log
 !logs/.gitkeep

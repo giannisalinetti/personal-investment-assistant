@@ -490,6 +490,122 @@ h2 { font-size: 1.2rem; margin-top: 1.75rem; margin-bottom: 0.65rem; }
   opacity: 0.65;
 }
 
+.settings-status {
+  margin: 0.75rem 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+.settings-status.error {
+  border-color: var(--danger, #b33);
+  color: var(--danger, #b33);
+}
+
+.settings-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 1.25rem 0 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.settings-nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+.settings-nav-link:hover,
+.settings-nav-link:focus-visible {
+  color: var(--accent);
+}
+
+.settings-section {
+  margin-top: 1.75rem;
+  scroll-margin-top: 1.25rem;
+}
+.settings-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.settings-section-header h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.35rem;
+}
+.settings-section-header .muted {
+  margin: 0;
+  max-width: 42rem;
+}
+
+.watchlist-editors {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.wl-class-editor {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.wl-class-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.wl-class-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+.wl-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+}
+.wl-badge.muted { color: var(--muted); }
+.wl-class-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.wl-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.wl-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 8rem) 1fr auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+.wl-row input {
+  width: 100%;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+}
+@media (max-width: 640px) {
+  .wl-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .site-footer {
   text-align: center;
   padding: 1.25rem;

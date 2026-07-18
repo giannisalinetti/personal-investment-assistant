@@ -177,11 +177,20 @@ flowchart TB
 
 | Volume / bind | Path in container |
 |---------------|-------------------|
-| `pia-data` | `/app/data` (`state.json`, advisor history) |
+| `pia-data` | `/app/data` (`state.json`, advisor history, **`watchlists_override.json`**) |
 | `pia-logs` | `/app/logs` |
 | `pia-cache` | `/app/.cache` |
-| bind `watchlists/` | `/app/watchlists` (read-only) |
+| bind `watchlists/` | `/app/watchlists` (read-only — YAML defaults; not edited by the Web UI) |
 | bind `.agents/` | `/app/.agents` (read-only) |
+
+### Watchlist overrides (Settings)
+
+The Web **Settings** tab can customize Stocks / ETFs / ETCs. Edits are persisted on the **`pia-data`** volume as `data/watchlists_override.json`, not in the git-tracked YAML under `watchlists/` (that bind mount is `:ro`).
+
+- Per asset class, a saved override **fully replaces** that class’s YAML list.
+- Classes without an override keep loading from `watchlists/*.yaml`.
+- **Reset** (per class or all) deletes the overlay keys so YAML defaults apply again.
+- Monitor, Advisor, and Telegram all call `load_watchlists()` and therefore see the same effective list.
 
 ## Web binding and auth
 

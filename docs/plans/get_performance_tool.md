@@ -1,53 +1,39 @@
 # Plan: `get_performance` Advisor tool
 
+**Status:** implemented (v1)
+
 ## Problem
 
-Questions like “best performing ETF last week” need **period returns**. Today Advisor only has Monitor signals / optional YTD in ticker details and `get_quote` (spot). That gap caused MU (stock) + YTD to be misused as “last week ETF performance.”
+Questions like “best performing ETF last week” need **period returns**. Advisor previously only had Monitor signals / optional YTD and `get_quote` (spot). That gap caused MU (stock) + YTD to be misused as “last week ETF performance.”
 
-Fixes **1+2** (class hard-scope + refuse invented returns) reduce hallucinations but still cannot *answer* the ranking question until a return tool exists.
+## Tools (shipped)
 
-## Proposed tool
-
-**Name:** `get_performance`  
-**Module:** new `src/tools/performance_tool.py` (mirror `src/tools/quote_tool.py`)
+**Module:** [`src/tools/performance_tool.py`](../../src/tools/performance_tool.py)
 
 ```text
 get_performance(ticker: str, period: str = "1wk") -> JSON
+rank_performance(tickers: list[str] | None = None, period: str = "1wk", asset_class: str | None = None) -> JSON
 ```
 
 | Field | Meaning |
 |-------|---------|
 | `ticker` | Yahoo symbol |
-| `period` | `1wk` \| `1mo` \| `3mo` \| `ytd` \| `1y` (start with these) |
+| `period` | `1wk` \| `1mo` \| `3mo` \| `ytd` \| `1y` |
 | `return_pct` | Close-to-close total return over the window |
 | `start_price` / `end_price` | Anchors for auditability |
 | `start_as_of` / `end_as_of` | Dates used |
 | `error` | If history missing |
 
-Implementation: `yfinance` history (reuse cache dir from `src/tools/yfinance_tool.py`); sync fetch + `@tool` wrapper like `get_quote`.
+`rank_performance` returns `{period, asset_class, ranked, errors}` sorted by `return_pct` desc. Empty `tickers` + `asset_class` loads that class from the watchlist; with `asset_class` set, out-of-class tickers (e.g. MU on an ETF ask) are dropped.
 
-Optional companion (same PR or follow-up):
+Registered in `_invoke_advisor_sync` with `get_quote` when `ADVISOR_FETCH_QUOTES=true`. When tools are disabled, period asks still get a deterministic refusal.
 
-```text
-rank_performance(tickers: list[str], period: str = "1wk", asset_class: str | None = None) -> JSON
-```
+## Acceptance
 
-Returns sorted list by `return_pct` so the model does not need N serial tool calls for “best ETF on my watchlist.” Prefer **one** `rank_performance` for watchlist rankings; keep `get_performance` for single-ticker asks.
+- `/ask what is the best performing ETF last week?` → model calls `rank_performance` → answer names an **`[etf]`** ticker with a **computed** week return (or explicit tool error), never a stock like MU from signals alone.
 
-## Wire into Advisor
-
-1. Register tools in `src/nodes/advisor.py` `_invoke_advisor_sync`: `[get_quote, get_performance]` (and `rank_performance` if added).
-2. System prompt: when `asks_period_performance(question)`, tell the model to **call** `rank_performance` / `get_performance` instead of saying unavailable (caveat block becomes “use the tool”).
-3. Respect asset-class scope: if question is ETF-scoped, only pass ETF tickers into `rank_performance` (Python can also filter inside the tool using watchlist + `infer_asset_class_scope`).
-4. Docs: extend tools table in `docs/agent_architecture.md`.
-5. Tests: unit tests with mocked history; loop test that fake LLM requests `get_performance`.
-
-## Non-goals (v1)
+## Non-goals (still)
 
 - Intraday / open-market timing precision
 - Benchmark-relative alpha
 - Changing Monitor graph (stay Advisor-only tools)
-
-## Acceptance
-
-- `/ask what is the best performing ETF last week?` → model calls ranking/performance tool → answer names an **`[etf]`** ticker with a **computed** week return (or explicit tool error), never a stock like MU from signals alone.

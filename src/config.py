@@ -203,22 +203,23 @@ def _load_legacy_watchlist(path: Path) -> list[WatchlistEntry]:
 
 
 def load_watchlists(directory: Path | None = None) -> list[WatchlistEntry]:
-    """Load stocks, ETFs, and ETCs from watchlists/*.yaml."""
-    watchlists_dir = directory or WATCHLISTS_DIR
-    entries: list[WatchlistEntry] = []
+    """Load stocks, ETFs, and ETCs from watchlists/*.yaml, merged with data overlay.
 
-    if watchlists_dir.is_dir():
-        for asset_class, filename in ASSET_CLASS_FILES.items():
-            entries.extend(_parse_class_file(watchlists_dir / filename, asset_class))
+    UI/API overrides live in ``data/watchlists_override.json`` (writable volume).
+    Per-class keys in the overlay fully replace that class's YAML list.
+    """
+    from src.watchlist_overlay import load_overlay_raw, load_yaml_defaults, merge_watchlists
 
-    if not entries and DEFAULT_WATCHLIST_PATH.exists():
-        logger.warning(
-            "Using deprecated %s — migrate to watchlists/{stock,etf,etc}.yaml",
-            DEFAULT_WATCHLIST_PATH,
-        )
-        entries = _load_legacy_watchlist(DEFAULT_WATCHLIST_PATH)
+    if directory is not None:
+        # Explicit directory: YAML only (tests / tooling); no overlay merge.
+        entries: list[WatchlistEntry] = []
+        if directory.is_dir():
+            for asset_class, filename in ASSET_CLASS_FILES.items():
+                entries.extend(_parse_class_file(directory / filename, asset_class))
+        return entries
 
-    return entries
+    defaults = load_yaml_defaults()
+    return merge_watchlists(defaults, load_overlay_raw())
 
 
 def load_watchlist(path: Path | None = None) -> list[WatchlistEntry]:

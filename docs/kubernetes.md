@@ -44,8 +44,8 @@ deploy/k8s/
 | Manifest | Role |
 |----------|------|
 | `namespace.yaml` | `pia` namespace |
-| `pvc-data.yaml` | Shared `data/` + logs PVCs |
-| `configmap-watchlists.yaml` | `stock.yaml` / `etf.yaml` / `etc.yaml` |
+| `pvc-data.yaml` | Shared `data/` + logs PVCs (also holds `watchlists_override.json` from Web Settings) |
+| `configmap-watchlists.yaml` | `stock.yaml` / `etf.yaml` / `etc.yaml` (defaults; typically read-only mount) |
 | `deployment-pia-web.yaml` | Web UI + ConfigMap `pia-config` (includes `PIA_MONITOR_SCHEDULER=false`) |
 | `deployment-pia-bot.yaml` | Telegram bot, **replicas: 1** |
 | `cronjob-pia-run.yaml` | `pre_market` / `midday` / `end_of_day` + suspended `manual` |

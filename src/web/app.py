@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from src.advisor_history import clear_history, load_turns
 from src.cli import command_parser
-from src.config import load_watchlist, settings, watchlist_counts
+from src.config import AssetClass, load_watchlist, settings, watchlist_counts
 from src.logging_config import configure_logging
 from src.monitor_scheduler import (
     monitor_busy,
@@ -28,6 +28,12 @@ from src.monitor_scheduler import (
 from src.nodes.notifier import DISCLAIMER
 from src.run_once import VALID_RUN_TYPES
 from src.state_persistence import NEXT_RUNS
+from src.watchlist_overlay import (
+    clear_class_override,
+    parse_entries_payload,
+    set_class_override,
+    settings_snapshot,
+)
 from src.web.advisor_service import stream_advisor
 from src.web.auth import require_web_token
 from src.web.history_view import exchange_by_id, exchanges_from_turns
@@ -46,6 +52,21 @@ class AskBody(BaseModel):
 
 class MonitorRunBody(BaseModel):
     run_type: str = "manual"
+
+
+class WatchlistEntryBody(BaseModel):
+    ticker: str = Field(..., min_length=1, max_length=32)
+    name: str = Field("", max_length=120)
+    alerts: dict | None = None
+
+
+class WatchlistPutBody(BaseModel):
+    asset_class: AssetClass
+    entries: list[WatchlistEntryBody] = Field(default_factory=list)
+
+
+class WatchlistResetBody(BaseModel):
+    asset_class: AssetClass | None = None
 
 
 @asynccontextmanager
@@ -178,6 +199,28 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/api/settings/watchlists")
+    async def api_settings_watchlists_get() -> JSONResponse:
+        return JSONResponse(settings_snapshot())
+
+    @app.put("/api/settings/watchlists")
+    async def api_settings_watchlists_put(body: WatchlistPutBody) -> JSONResponse:
+        entries = parse_entries_payload(
+            [item.model_dump() for item in body.entries],
+            body.asset_class,
+        )
+        set_class_override(body.asset_class, entries)
+        return JSONResponse(settings_snapshot())
+
+    @app.post("/api/settings/watchlists/reset")
+    async def api_settings_watchlists_reset(
+        body: WatchlistResetBody = Body(default_factory=WatchlistResetBody),
+    ) -> JSONResponse:
+        # Body() is required: optional `Model | None = None` skips JSON and always
+        # passed None, which incorrectly cleared every class.
+        clear_class_override(body.asset_class)
+        return JSONResponse(settings_snapshot())
+
     def _page_context(request: Request, active: str) -> dict:
         token = settings.PIA_WEB_TOKEN.strip()
         token_query = f"?token={token}" if token else ""
@@ -222,6 +265,14 @@ def create_app() -> FastAPI:
             request,
             "advisor.html",
             _page_context(request, "advisor"),
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_page(request: Request) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings.html",
+            _page_context(request, "settings"),
         )
 
     @app.get("/about", response_class=HTMLResponse)

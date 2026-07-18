@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<section class="panel settings-panel">
+  <h1>Settings</h1>
+  <p class="muted">Configure how PIA runs for this install. Changes that need persistence are stored on the data volume, not in git-tracked defaults.</p>
+
+  <nav class="settings-nav" aria-label="Settings sections">
+    <a href="#settings-watchlist" class="settings-nav-link">Watchlist</a>
+  </nav>
+
+  <p id="settings-status" class="settings-status" hidden></p>
+
+  <section id="settings-watchlist" class="settings-section" aria-labelledby="settings-watchlist-title">
+    <header class="settings-section-header">
+      <div>
+        <h2 id="settings-watchlist-title">Watchlist</h2>
+        <p class="muted">
+          Override Stocks, ETFs, and ETCs used by Monitor and Advisor.
+          Saved to <code>data/watchlists_override.json</code> — does not modify read-only YAML under <code>watchlists/</code>.
+        </p>
+      </div>
+      <button type="button" id="btn-reset-all" class="btn btn-danger">Reset all to YAML defaults</button>
+    </header>
+    <div id="watchlist-editors" class="watchlist-editors"></div>
+  </section>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/settings.js?v=3"></script>
+{% endblock %}

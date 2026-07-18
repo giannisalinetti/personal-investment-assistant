@@ -26,6 +26,7 @@ from src.llm import get_advisor_llm
 from src.state_persistence import stale_state_warning
 from src.tools.fundamentals_tool import fetch_fundamentals_batch
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
+from src.tools.performance_tool import get_performance, rank_performance
 from src.tools.quote_tool import get_quote
 from src.skills import activated_skill_names, format_skills_block, select_skills
 from src.telemetry import start_span
@@ -201,7 +202,7 @@ def period_performance_unavailable_reply(
         f"I don't have computed period returns for your {label} yet ({tickers}). "
         "Monitor signals and YTD figures are not the same as last-week or last-month performance, "
         "so I won't invent a ranking or re-label a stock as an ETF. "
-        "A get_performance / rank_performance tool is planned for this."
+        "Enable ADVISOR_FETCH_QUOTES (performance tools share that flag) to compute returns."
     )
 
 
@@ -647,8 +648,10 @@ def _build_prompt(
         "(works the same for local Ollama tool-capable models and cloud SOTA providers)\n"
         "- Period / comparative performance (best/worst last week/month, returns, YTD as a ranking): "
         "Monitor signals and YTD fields are NOT a substitute for week/month returns. "
-        "If computed period returns are not in the context or tool results, say you do not have "
-        "that data yet — do not invent percentages or crown a winner from RSI/MACD alone\n"
+        "Call rank_performance for watchlist/class rankings (pass eligible tickers and/or "
+        "asset_class=etf|stock|etc, period=1wk|1mo|3mo|ytd|1y) or get_performance for one ticker. "
+        "Cite only return_pct from tool results — never invent percentages or crown a winner "
+        "from RSI/MACD alone\n"
         "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for stock expensive/cheap questions only\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
         "- Do not invent prices, RSI, P/E, PEG values, headlines, or returns not present in context/tools\n"
@@ -685,12 +688,24 @@ def _build_prompt(
 
     performance_note = ""
     if mode == "ask" and asks_period_performance(question):
-        performance_note = (
-            "=== Period performance caveat ===\n"
-            "This question asks for period/comparative performance. "
-            "No week/month return ranking is provided in this prompt. "
-            "Do not invent returns; say the data is unavailable unless a tool returns it.\n"
-        )
+        if settings.ADVISOR_FETCH_QUOTES:
+            eligible = ", ".join(e.ticker for e in scoped_watchlist) or "(none)"
+            class_hint = class_scope or "omit"
+            performance_note = (
+                "=== Period performance ===\n"
+                "Call rank_performance (preferred for best/worst rankings) or get_performance. "
+                f"Eligible tickers: {eligible}. "
+                f"Suggested asset_class={class_hint}. "
+                "Map last week→1wk, last month→1mo, YTD→ytd. "
+                "Do not invent returns; use only tool JSON.\n"
+            )
+        else:
+            performance_note = (
+                "=== Period performance caveat ===\n"
+                "This question asks for period/comparative performance. "
+                "Performance tools are disabled. "
+                "Do not invent returns; say the data is unavailable.\n"
+            )
 
     if mode == "brief":
         watchlist_text = _format_watchlist_by_class(watchlist_block)
@@ -783,7 +798,7 @@ def _invoke_advisor_sync(prompt: str) -> str:
             llm,
             system=system,
             user=user,
-            tools=[get_quote],
+            tools=[get_quote, get_performance, rank_performance],
             max_rounds=8 if "=== Task ===" in user else 6,
         )
     response = llm.invoke(prompt)
@@ -805,9 +820,13 @@ async def advisor_respond(
     if state is None:
         return warning or "Monitor state unavailable."
 
-    # Until get_performance exists, never let the LLM invent period rankings
-    # (prior chat history has already caused MU-as-ETF hallucinations).
-    if mode == "ask" and asks_period_performance(question):
+    # Without tools, refuse period rankings so the model cannot invent them
+    # (history poisoning previously caused MU-as-ETF hallucinations).
+    if (
+        mode == "ask"
+        and asks_period_performance(question)
+        and not settings.ADVISOR_FETCH_QUOTES
+    ):
         reply = period_performance_unavailable_reply(question=question, watchlist=watchlist)
         if warning:
             return f"⚠ {warning}\n\n{reply}"
