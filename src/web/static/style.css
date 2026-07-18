@@ -486,7 +486,9 @@ h2 { font-size: 1.2rem; margin-top: 1.75rem; margin-bottom: 0.65rem; }
   resize: vertical;
 }
 
-.ask-form button { margin-top: 0.5rem; }
+.ask-form textarea:disabled {
+  opacity: 0.65;
+}
 
 .site-footer {
   text-align: center;

@@ -151,6 +151,10 @@ When `ADVISOR_FETCH_QUOTES=true` (default), Advisor binds LangChain tools via `l
 
 Live quotes are **not** pre-fetched into the prompt anymore when the tool is enabled — the model must call `get_quote`. Look for log lines `Advisor tool round N: get_quote`.
 
+**Asset-class hard scope (Advisor `/ask`):** when the question clearly names ETFs, stocks, or ETCs, watchlist + Monitor signals in the prompt are filtered to that class only (so a stock like `MU` cannot be cited as an ETF). Skills activate for the scoped class.
+
+**Period performance:** questions about best/worst last week/month/YTD rankings currently get a **deterministic refusal** (no LLM) listing in-scope tickers and stating that returns are not computed yet — this avoids history-poisoned hallucinations (e.g. calling stock `MU` an ETF). A future `get_performance` / `rank_performance` tool will replace that refusal; see [`plans/get_performance_tool.md`](plans/get_performance_tool.md). Conversation history that mentions out-of-scope tickers is also stripped when a class scope is active.
+
 ```mermaid
 sequenceDiagram
   participant User

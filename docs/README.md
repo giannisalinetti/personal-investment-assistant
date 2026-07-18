@@ -8,6 +8,7 @@ Operator and architecture guides for Personal Investment Assistant.
 | [compose.md](compose.md) | Home packaging — Docker / Podman Compose (host Ollama default) |
 | [kubernetes.md](kubernetes.md) | Kubernetes (kind, GPU, cloud-only) |
 | [openshift.md](openshift.md) | OpenShift + OpenShift AI (vLLM serving) |
+| [plans/get_performance_tool.md](plans/get_performance_tool.md) | Planned Advisor `get_performance` / ranking tool |
 
 Deep product specification remains in [`../SPEC.md`](../SPEC.md). Env template: [`../.env.example`](../.env.example).
 

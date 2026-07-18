@@ -8,7 +8,6 @@
   const btnNew = document.getElementById("btn-new");
   const btnBrief = document.getElementById("btn-brief");
   const btnClear = document.getElementById("btn-clear");
-  const btnAsk = document.getElementById("btn-ask");
   const sidebarList = document.getElementById("sidebar-list");
   const sidebarEmpty = document.getElementById("sidebar-empty");
 
@@ -96,8 +95,8 @@
 
   function setBusy(busy) {
     btnBrief.disabled = busy;
-    btnAsk.disabled = busy;
     btnNew.disabled = busy;
+    if (questionEl) questionEl.disabled = busy;
     if (busy) form.classList.add("busy");
     else form.classList.remove("busy");
   }
@@ -386,6 +385,14 @@
     appendUserTurn(q);
     questionEl.value = "";
     streamAdvisor("ask", q);
+  });
+
+  questionEl?.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" || ev.shiftKey) return;
+    if (ev.isComposing) return;
+    ev.preventDefault();
+    if (questionEl.disabled) return;
+    form?.requestSubmit();
   });
 
   btnNew?.addEventListener("click", () => {

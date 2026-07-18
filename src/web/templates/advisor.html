@@ -30,13 +30,12 @@
 
       <form id="ask-form" class="ask-form">
         <label for="question">Ask a question</label>
-        <textarea id="question" name="question" rows="3" placeholder="e.g. How does AAPL look vs the last Monitor run?"></textarea>
-        <button type="submit" class="btn primary" id="btn-ask">Send</button>
+        <textarea id="question" name="question" rows="3" placeholder="e.g. How does AAPL look vs the last Monitor run? (Enter to send, Shift+Enter for newline)"></textarea>
       </form>
     </div>
   </div>
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/advisor.js?v=3"></script>
+<script src="/static/advisor.js?v=5"></script>
 {% endblock %}

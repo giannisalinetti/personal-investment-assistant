@@ -19,7 +19,7 @@ from src.advisor_scan import (
     run_indicator_scan,
     scan_status_message,
 )
-from src.config import ASSET_CLASS_LABELS, WatchlistEntry, settings
+from src.config import ASSET_CLASS_LABELS, AssetClass, WatchlistEntry, settings
 from src.tools.ticker_extract import extract_adhoc_tickers
 from src.advisor_tool_loop import invoke_with_tools
 from src.llm import get_advisor_llm
@@ -33,6 +33,29 @@ from src.telemetry import start_span
 logger = logging.getLogger(__name__)
 
 _CLASS_ORDER = ("stock", "etf", "etc")
+
+# Explicit class words in the user question → hard-scope context to that class.
+_ASSET_CLASS_SCOPE = re.compile(
+    r"\b("
+    r"etfs?|exchange[\s-]?traded\s+funds?|"
+    r"etcs?|exchange[\s-]?traded\s+commodit(?:y|ies)|"
+    r"stocks?|equit(?:y|ies)|shares?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_PERIOD_PERFORMANCE_HINTS = re.compile(
+    r"\b("
+    r"best\s+perform(?:ing|er|ance)|worst\s+perform(?:ing|er|ance)|"
+    r"top\s+perform(?:ing|er)|outperform|"
+    r"last\s+week|past\s+week|this\s+week|"
+    r"last\s+month|past\s+month|this\s+month|"
+    r"last\s+\d+\s+days?|past\s+\d+\s+days?|"
+    r"1\s*w(?:eek)?|1\s*m(?:onth)?|ytd|year[\s-]?to[\s-]?date|"
+    r"return|returns|gain(?:ed|s)?|lost|down\s+\d|up\s+\d"
+    r")\b",
+    re.IGNORECASE,
+)
 
 BRIEF_PROMPT = """Produce a compact daily brief for my watchlist.
 
@@ -65,20 +88,148 @@ def fresh_news_targets(
     mode: str,
 ) -> list[WatchlistEntry]:
     """Return watchlist entries to fetch live headlines for (sync subset)."""
+    class_scope = infer_asset_class_scope(question) if mode == "ask" else None
+    scoped = filter_entries_by_asset_class(watchlist, class_scope)
+
     if mode == "brief":
         return watchlist
 
-    mentioned = _entries_mentioned_in_text(question, watchlist)
+    mentioned = _entries_mentioned_in_text(question, scoped)
     if mentioned:
         return mentioned
 
-    adhoc = extract_adhoc_tickers(question, watchlist)[: settings.ADVISOR_ADHOC_MAX_TICKERS]
+    adhoc = extract_adhoc_tickers(question, scoped)[: settings.ADVISOR_ADHOC_MAX_TICKERS]
     if adhoc:
         return [WatchlistEntry(ticker=ticker, name=ticker) for ticker in adhoc]
 
-    if _RECENT_NEWS_HINTS.search(question):
-        return watchlist
+    if _RECENT_NEWS_HINTS.search(question) or asks_period_performance(question):
+        return scoped
     return []
+
+
+def infer_asset_class_scope(question: str) -> AssetClass | None:
+    """Return a single asset class when the question clearly names one.
+
+    Used to hard-filter watchlist/state for /ask so stocks are not treated as ETFs.
+    """
+    matches = _ASSET_CLASS_SCOPE.findall(question)
+    if not matches:
+        return None
+
+    classes: set[AssetClass] = set()
+    for raw in matches:
+        token = raw.lower()
+        if token.startswith("etf") or "fund" in token:
+            classes.add("etf")
+        elif token.startswith("etc") or "commodit" in token:
+            classes.add("etc")
+        else:
+            classes.add("stock")
+
+    if len(classes) == 1:
+        return next(iter(classes))
+    return None
+
+
+def filter_entries_by_asset_class(
+    entries: list[WatchlistEntry],
+    asset_class: AssetClass | None,
+) -> list[WatchlistEntry]:
+    if asset_class is None:
+        return entries
+    return [entry for entry in entries if entry.asset_class == asset_class]
+
+
+def filter_state_by_asset_class(
+    state: dict,
+    *,
+    watchlist: list[WatchlistEntry],
+    asset_class: AssetClass | None,
+) -> dict:
+    """Keep only Monitor rows matching ``asset_class`` (signals / suggestions)."""
+    if asset_class is None:
+        return state
+
+    ticker_class = {entry.ticker.upper(): entry.asset_class for entry in watchlist}
+
+    def _signal_class(signal: dict) -> str:
+        explicit = signal.get("asset_class")
+        if explicit in {"stock", "etf", "etc"}:
+            return str(explicit)
+        return ticker_class.get(str(signal.get("ticker", "")).upper(), "stock")
+
+    filtered = {
+        "last_run": state.get("last_run"),
+        "run_type": state.get("run_type"),
+        "skipped": state.get("skipped"),
+        "watchlist_note": state.get("watchlist_note"),
+        "signals": [
+            signal
+            for signal in state.get("signals", [])
+            if _signal_class(signal) == asset_class
+        ],
+        "suggestions": [
+            item
+            for item in state.get("suggestions", [])
+            if str(item.get("asset_class") or "") == asset_class
+            or (
+                not item.get("asset_class")
+                and ticker_class.get(str(item.get("ticker", "")).upper()) == asset_class
+            )
+        ],
+        "errors": state.get("errors", []),
+    }
+    return filtered
+
+
+def asks_period_performance(question: str) -> bool:
+    """True when the user asks for comparative/period returns we may not have computed."""
+    return bool(_PERIOD_PERFORMANCE_HINTS.search(question))
+
+
+def period_performance_unavailable_reply(
+    *,
+    question: str,
+    watchlist: list[WatchlistEntry],
+) -> str:
+    """Deterministic reply until get_performance / rank_performance tools exist."""
+    class_scope = infer_asset_class_scope(question)
+    scoped = filter_entries_by_asset_class(watchlist, class_scope)
+    label = ASSET_CLASS_LABELS.get(class_scope, "watchlist") if class_scope else "watchlist"
+    tickers = ", ".join(entry.ticker for entry in scoped) if scoped else "none on watchlist"
+    return (
+        f"I don't have computed period returns for your {label} yet ({tickers}). "
+        "Monitor signals and YTD figures are not the same as last-week or last-month performance, "
+        "so I won't invent a ranking or re-label a stock as an ETF. "
+        "A get_performance / rank_performance tool is planned for this."
+    )
+
+
+def filter_history_for_scope(
+    history: list[dict],
+    *,
+    watchlist: list[WatchlistEntry],
+    asset_class: AssetClass | None,
+) -> list[dict]:
+    """Drop history turns that mention tickers outside the active asset-class scope."""
+    if asset_class is None or not history:
+        return history
+
+    out_of_scope = {
+        entry.ticker.upper()
+        for entry in watchlist
+        if entry.asset_class != asset_class
+    }
+    if not out_of_scope:
+        return history
+
+    cleaned: list[dict] = []
+    for turn in history:
+        upper = str(turn.get("content", "")).upper()
+        if any(re.search(rf"\b{re.escape(ticker)}\b", upper) for ticker in out_of_scope):
+            continue
+        cleaned.append(turn)
+    return cleaned
 
 
 def _dedupe_entries(entries: list[WatchlistEntry]) -> list[WatchlistEntry]:
@@ -115,17 +266,20 @@ async def resolve_advisor_targets(
     if mode == "brief":
         return watchlist, None, None
 
-    watchlist_mentioned = _entries_mentioned_in_text(question, watchlist)
+    class_scope = infer_asset_class_scope(question)
+    scoped_watchlist = filter_entries_by_asset_class(watchlist, class_scope)
+
+    watchlist_mentioned = _entries_mentioned_in_text(question, scoped_watchlist)
     scan: IndicatorScanResult | None = None
     on_demand: dict | None = None
     explicit_entries: list[WatchlistEntry] = []
 
     parallel: list[tuple[str, asyncio.Task]] = []
     if settings.ADVISOR_SCAN_ENABLED:
-        parallel.append(("scan", asyncio.create_task(run_indicator_scan(question, watchlist))))
+        parallel.append(("scan", asyncio.create_task(run_indicator_scan(question, scoped_watchlist))))
     if settings.ADVISOR_ADHOC_ANALYSIS:
         parallel.append(
-            ("adhoc", asyncio.create_task(_maybe_analyze_explicit_tickers(question, watchlist)))
+            ("adhoc", asyncio.create_task(_maybe_analyze_explicit_tickers(question, scoped_watchlist)))
         )
 
     if parallel:
@@ -138,10 +292,14 @@ async def resolve_advisor_targets(
 
     if watchlist_mentioned or explicit_entries:
         query_entries = _dedupe_entries(watchlist_mentioned + explicit_entries)
-    elif _RECENT_NEWS_HINTS.search(question):
-        query_entries = watchlist
+    elif _RECENT_NEWS_HINTS.search(question) or asks_period_performance(question):
+        # Comparative / recent questions: stay inside class scope when present.
+        query_entries = scoped_watchlist
     else:
         query_entries = []
+
+    if class_scope:
+        query_entries = filter_entries_by_asset_class(query_entries, class_scope)
 
     return query_entries, on_demand, scan
 
@@ -476,28 +634,63 @@ def _build_prompt(
         "investment decisions — you never execute trades and have no portfolio access.\n"
         "Rules:\n"
         "- Latest Monitor run covers the configured watchlist only\n"
-        "- Respect asset classes (stock / etf / etc) — do not mix equity valuation with ETF/ETC analysis\n"
+        "- HARD asset-class rule: if the user asks about ETFs, only discuss tickers tagged [etf]; "
+        "if about stocks/equities, only [stock]; if about ETCs/commodities, only [etc]. "
+        "Never call a stock an ETF (or vice versa)\n"
+        "- The Watchlist / Monitor sections below are already filtered to the relevant class when "
+        "the question names one — do not pull tickers from outside those sections\n"
         "- Indicator scan results include a pre-computed exact_leader — always state that ticker and value\n"
         "- On-demand analysis covers explicitly mentioned tickers outside the watchlist\n"
         "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Valuation metrics, "
         "Fresh headlines, activated Skills, and live quotes from tools\n"
-        "- When you need a live price or daily change, call the get_quote tool "
+        "- When you need a live price or daily change %, call the get_quote tool "
         "(works the same for local Ollama tool-capable models and cloud SOTA providers)\n"
+        "- Period / comparative performance (best/worst last week/month, returns, YTD as a ranking): "
+        "Monitor signals and YTD fields are NOT a substitute for week/month returns. "
+        "If computed period returns are not in the context or tool results, say you do not have "
+        "that data yet — do not invent percentages or crown a winner from RSI/MACD alone\n"
         "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for stock expensive/cheap questions only\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
-        "- Do not invent prices, RSI, P/E, PEG values, or headlines not present in the context or tool results\n"
+        "- Do not invent prices, RSI, P/E, PEG values, headlines, or returns not present in context/tools\n"
         "- Note when P/E or PEG is unavailable (common for ETFs/ETCs); do not substitute guesses\n"
         "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
         "- State assumptions explicitly when data is incomplete\n"
         "- Be compact: for /ask lead with 1–3 sentences, then at most 5 short bullets\n"
         "- Plain text only — no markdown headings (##), no **bold**, no [markdown](links)"
     )
-    prompt_state = _state_for_prompt(state, mode=mode, question=question, watchlist=watchlist)
-    watchlist_block = watchlist
+    class_scope = infer_asset_class_scope(question) if mode == "ask" else None
+    scoped_watchlist = filter_entries_by_asset_class(watchlist, class_scope)
+    prompt_state = _state_for_prompt(state, mode=mode, question=question, watchlist=scoped_watchlist)
+    prompt_state = filter_state_by_asset_class(
+        prompt_state,
+        watchlist=watchlist,
+        asset_class=class_scope,
+    )
+    watchlist_block = scoped_watchlist
     if mode == "ask":
-        mentioned = _entries_mentioned_in_text(question, watchlist)
+        mentioned = _entries_mentioned_in_text(question, scoped_watchlist)
         if mentioned:
             watchlist_block = mentioned
+
+    scope_note = ""
+    if class_scope:
+        label = ASSET_CLASS_LABELS.get(class_scope, class_scope)
+        scope_note = (
+            f"=== Asset-class scope ===\n"
+            f"User question is scoped to {label} only. "
+            f"Eligible tickers: "
+            + (", ".join(e.ticker for e in scoped_watchlist) or "(none on watchlist)")
+            + "\n"
+        )
+
+    performance_note = ""
+    if mode == "ask" and asks_period_performance(question):
+        performance_note = (
+            "=== Period performance caveat ===\n"
+            "This question asks for period/comparative performance. "
+            "No week/month return ranking is provided in this prompt. "
+            "Do not invent returns; say the data is unavailable unless a tool returns it.\n"
+        )
 
     if mode == "brief":
         watchlist_text = _format_watchlist_by_class(watchlist_block)
@@ -509,6 +702,13 @@ def _build_prompt(
     parts = [
         system,
         "",
+    ]
+    if scope_note:
+        parts.extend([scope_note, ""])
+    if performance_note:
+        parts.extend([performance_note, ""])
+    parts.extend(
+        [
         "=== Activated skills ===",
         skills_block or "No specialized skills activated.",
         "",
@@ -536,14 +736,24 @@ def _build_prompt(
         "",
         "=== Fresh headlines (live RSS) ===",
         _format_fresh_headlines_block(fresh_headlines),
-    ]
+        ]
+    )
     if history:
         history_limit = 4 if mode == "ask" else 6
-        parts.extend(["", "=== Conversation history ==="])
-        for turn in history[-history_limit:]:
-            role = turn.get("role", "user")
-            content = turn.get("content", "")
-            parts.append(f"{role.upper()}: {content}")
+        scoped_history = filter_history_for_scope(
+            history,
+            watchlist=watchlist,
+            asset_class=class_scope,
+        )
+        # Period-performance asks are easy to poison with prior wrong rankings.
+        if mode == "ask" and asks_period_performance(question):
+            scoped_history = []
+        if scoped_history:
+            parts.extend(["", "=== Conversation history ==="])
+            for turn in scoped_history[-history_limit:]:
+                role = turn.get("role", "user")
+                content = turn.get("content", "")
+                parts.append(f"{role.upper()}: {content}")
 
     if mode == "brief":
         parts.extend(["", "=== Task ===", BRIEF_PROMPT])
@@ -595,6 +805,14 @@ async def advisor_respond(
     if state is None:
         return warning or "Monitor state unavailable."
 
+    # Until get_performance exists, never let the LLM invent period rankings
+    # (prior chat history has already caused MU-as-ETF hallucinations).
+    if mode == "ask" and asks_period_performance(question):
+        reply = period_performance_unavailable_reply(question=question, watchlist=watchlist)
+        if warning:
+            return f"⚠ {warning}\n\n{reply}"
+        return reply
+
     with start_span("pia.advisor.respond", attributes={"pia.advisor.mode": mode}) as respond_span:
         if resolved is None:
             entries, on_demand, scan = await resolve_advisor_targets(
@@ -604,7 +822,10 @@ async def advisor_respond(
             )
         else:
             entries, on_demand, scan = resolved
-        link_entries = entries or _entries_mentioned_in_text(question, watchlist)
+
+        class_scope = infer_asset_class_scope(question) if mode == "ask" else None
+        scoped_watchlist = filter_entries_by_asset_class(watchlist, class_scope)
+        link_entries = entries or _entries_mentioned_in_text(question, scoped_watchlist)
         # Live quotes are model-driven via get_quote when ADVISOR_FETCH_QUOTES=true.
         quote_errors: list[str] = []
 
@@ -615,7 +836,7 @@ async def advisor_respond(
                 _fetch_valuation_metrics(
                     mode=mode,
                     question=question,
-                    watchlist=watchlist,
+                    watchlist=scoped_watchlist,
                     entries=entries,
                 ),
             )
@@ -624,11 +845,12 @@ async def advisor_respond(
         live_quotes: dict[str, dict] = {}
         valuation, fundamentals_errors = valuation_result
 
+        skill_targets = entries or scoped_watchlist
         skills = select_skills(
             mode=mode,
             question=question,
-            watchlist=watchlist,
-            target_entries=entries or _entries_mentioned_in_text(question, watchlist) or None,
+            watchlist=scoped_watchlist,
+            target_entries=skill_targets or None,
         )
         skills_block = format_skills_block(skills)
         skill_names = activated_skill_names(skills)
