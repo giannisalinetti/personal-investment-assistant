@@ -1,25 +1,42 @@
 # Deploy with Docker / Podman Compose
 
-Full operator guide for Phase **5a**. Short pointer: [`docker/README.md`](../docker/README.md).
+**Home packaging** for PIA (Phase **5a**). Short pointer: [`docker/README.md`](../docker/README.md). Helper: [`docker/up.sh`](../docker/up.sh).
 
 Architecture context: [agent_architecture.md](agent_architecture.md). For Kubernetes / OpenShift see [kubernetes.md](kubernetes.md) and [openshift.md](openshift.md).
 
 ## Prerequisites
 
-- **Podman** or **Docker** with a Compose provider (`podman-compose`, or `docker compose` plugin)
-- For local models: **Ollama on the host** (not inside Compose) — default path
-- For GPU vLLM: NVIDIA Linux host with working GPU device access
-- Repo checkout with `watchlists/` and `.agents/skills/`
+You need **all** of the following for the default home stack:
+
+| Requirement | Details |
+|-------------|---------|
+| **Podman** *or* **Docker** | Container runtime (`podman --version` or `docker --version`) |
+| **Compose provider** | One of: `podman-compose`, `podman compose`, `docker compose` (v2 plugin), or `docker-compose` |
+| **Ollama on the host** | Default LLM — install from [ollama.com](https://ollama.com); keep the daemon running on host port `11434`. Ollama is **not** started by Compose. |
+| Repo checkout | Includes `watchlists/` and `.agents/skills/` |
+
+Optional:
+
+- Telegram (`TELEGRAM_*` in `.env`) for Advisor bot
+- NVIDIA GPU + Compose `--profile gpu` for in-stack vLLM (instead of host Ollama)
+- Stub profile for smoke tests without Ollama
 
 ```bash
 cd /path/to/personal-investment-assistant
-cp .env.example .env   # edit secrets / LLM URLs
+cp .env.example .env   # edit secrets / OLLAMA_BASE_URL (see Host Ollama below)
+```
+
+One-shot helper (builds image + default `up`):
+
+```bash
+./docker/up.sh
 ```
 
 ## Build images
 
 ```bash
 podman build -t localhost/pia:local -f docker/Dockerfile .
+# Only needed for --profile stub:
 podman build -t localhost/pia-llm-stub:local -f docker/llm-stub/Dockerfile docker/llm-stub
 ```
 
@@ -49,17 +66,7 @@ Project name is `pia` (named volumes like `pia_pia-data`).
 
 ## Quick starts
 
-### Stub smoke (no GPU, no Ollama)
-
-```bash
-podman-compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub up -d
-curl -s http://127.0.0.1:8765/api/health
-podman-compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub run --rm pia-run --run-type manual
-```
-
-Dashboard: http://127.0.0.1:8765
-
-### Host Ollama (Mac / Linux without GPU)
+### Host Ollama (default — Mac / Linux)
 
 Ollama stays on the **host**. Containers must not use `localhost:11434` (that is the container itself).
 
@@ -76,8 +83,11 @@ PIA_MONITOR_SCHEDULER=true
 ```
 
 ```bash
-podman-compose -f docker/compose.yml up -d
+./docker/up.sh
+# or: podman-compose -f docker/compose.yml up -d
 ```
+
+Dashboard: http://127.0.0.1:8765
 
 ```mermaid
 flowchart LR
@@ -90,6 +100,14 @@ flowchart LR
   end
   web -->|"OLLAMA_BASE_URL"| ollama
   bot -->|"OLLAMA_BASE_URL"| ollama
+```
+
+### Stub smoke (no GPU, no Ollama)
+
+```bash
+podman-compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub up -d
+curl -s http://127.0.0.1:8765/api/health
+podman-compose -f docker/compose.yml -f docker/compose.stub.yml --profile stub run --rm pia-run --run-type manual
 ```
 
 ### vLLM on NVIDIA (Compose GPU profile)

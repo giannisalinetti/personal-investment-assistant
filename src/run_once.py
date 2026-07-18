@@ -24,7 +24,7 @@ def _parse_args() -> argparse.Namespace:
         "pia-run",
         "Run the Monitor pipeline once, persist state.json, and exit.",
         epilog=(
-            "Used by launchd/systemd timers for scheduled Monitor runs. "
+            "Used for one-shot Monitor runs (Compose pia-run, K8s CronJobs, Ofelia, or manual).\n"
             "May send a proactive Advisor brief after pre_market when enabled.\n\n"
             "Examples:\n"
             "  uv run pia-run --run-type pre_market\n"

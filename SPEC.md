@@ -74,7 +74,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 - Fetch live quotes on demand when answering Advisor questions
 - Fetch valuation metrics on demand (trailing P/E, forward P/E, PEG) — Advisor only, not Monitor
 - Ad-hoc ticker analysis and indicator scans for symbols/comparisons outside the watchlist
-- Install scripts for `pia-bot` (`deploy/install-pia-bot-macos.sh`, `deploy/install-pia-bot-linux.sh`) — run after local validation
+- Home packaging via Compose (`./docker/up.sh` / `docs/compose.md`) — `pia-web` + `pia-bot`
 
 **Phase 4 (planned)**
 
@@ -255,8 +255,9 @@ class AgentState(TypedDict):
 | News / sentiment | `feedparser` + RSS | Configurable feeds; watchlist Google News added at runtime |
 | Telegram | `python-telegram-bot` | Async bot API v21+ |
 | Email | `smtplib` + `email` stdlib | Gmail SMTP or SendGrid |
-| Scheduling (v1 deploy) | launchd (macOS) / systemd timers (Linux) | One-shot Monitor runs — see Service Lifecycle |
-| Scheduling + Advisor | `APScheduler` in `main.py` | Long-running daemon: scheduled runs + Telegram advisor commands |
+| Scheduling (home) | Compose APScheduler in `pia-web` | Default; Ofelia optional — see `docs/compose.md` |
+| Scheduling (cluster) | Kubernetes / OpenShift CronJobs | `PIA_MONITOR_SCHEDULER=false` on Deployments |
+| Scheduling + Advisor | `APScheduler` in `main.py` / Compose `pia-bot` | Long-running daemon: optional schedule + Telegram |
 | Terminal console | `rich` | Live dashboard, read-only, separate process |
 | Config | `pydantic-settings` + `.env` | Typed configuration |
 | Package manager | `uv` | Isolated `.venv` per project, Python 3.12+ |
@@ -264,12 +265,12 @@ class AgentState(TypedDict):
 
 ### Platform notes
 
-| Platform | Ollama inference | Scheduled runs |
+| Platform | Ollama inference | Home packaging |
 |---|---|---|
-| **macOS** | Metal (Apple Silicon GPU) | launchd calendar intervals → one-shot `pia-run` |
-| **Linux** | CUDA / ROCm / CPU (host-dependent) | systemd user timers → one-shot `pia-run.service` |
+| **macOS** | Metal (Apple Silicon GPU) | Podman/Docker Compose → `pia-web` APScheduler + `pia-bot` |
+| **Linux** | CUDA / ROCm / CPU (host-dependent) | Same Compose stack; optional `--profile gpu` for vLLM |
 
-The Python application code is OS-agnostic. Platform differences are limited to deployment templates under `deploy/`.
+The Python application code is OS-agnostic. **Home packaging is Compose-only** ([`docs/compose.md`](docs/compose.md)); cluster packaging is Kubernetes / OpenShift ([`docs/kubernetes.md`](docs/kubernetes.md), [`docs/openshift.md`](docs/openshift.md)). Local development uses `uv run` without containers.
 
 ### Environment Isolation
 
@@ -382,17 +383,15 @@ personal-investment-assistant/
 │   ├── compose.md
 │   ├── kubernetes.md
 │   └── openshift.md
-├── deploy/                       # scheduling + K8s + OTEL
-│   ├── launchd/
-│   ├── systemd/
+├── deploy/                       # K8s + OTEL (home packaging is docker/)
 │   ├── otel/
 │   └── k8s/                      # Phase 5b — base + stub/gpu/cloud-only
-├── docker/                       # Phase 5a — Dockerfile, compose, llm-stub
+├── docker/                       # Phase 5a — Dockerfile, compose, up.sh, llm-stub
 ├── .agents/skills/               # runtime Agent Skills
 ├── logs/
 │   ├── app.log                   # application logs (RotatingFileHandler)
-│   ├── stdout.log                # service stdout (launchd / systemd)
-│   ├── stderr.log                # service stderr (launchd / systemd)
+│   ├── stdout.log                # optional process stdout capture
+│   ├── stderr.log                # optional process stderr capture
 │   └── scheduler.log             # skipped runs log
 ├── data/
 │   ├── state.json                # Monitor output — Advisor + console read this
@@ -438,14 +437,23 @@ personal-investment-assistant/
 
 ## Service Lifecycle — Scheduling
 
-> **Implement after core logic is complete.** The LangGraph pipeline (`pia-graph`) is platform-independent. Deployment adds OS-native schedulers that invoke a one-shot entry point (`pia-run`) at the configured times.
+> **Home packaging is Compose.** The LangGraph pipeline (`pia-graph` / `pia-run`) is platform-independent. On a laptop or single host, Podman/Docker Compose runs `pia-web` (dashboard + default Monitor schedule) and `pia-bot` (Telegram Advisor). Clusters use Kubernetes / OpenShift CronJobs — see [`docs/kubernetes.md`](docs/kubernetes.md) and [`docs/openshift.md`](docs/openshift.md).
 
-### Shared behaviour (macOS + Linux)
+### Prerequisites (home)
+
+| Requirement | Notes |
+|-------------|--------|
+| Podman **or** Docker | Container runtime |
+| Compose provider | `podman-compose` / `podman compose`, or `docker compose` / `docker-compose` |
+| Ollama on the host | Default LLM on port `11434` — not started by Compose |
+
+### Shared behaviour
 
 - **Schedule:** 08:00, 13:00, 17:30 in `TIMEZONE` from `.env` (default `Europe/Rome`)
-- **Entry command:** `uv run pia-run --run-type {pre_market|midday|end_of_day}`
+- **Default owner:** in-process APScheduler inside Compose `pia-web` (`PIA_MONITOR_SCHEDULER=true`)
+- **One-shot entry:** `pia-run --run-type {pre_market|midday|end_of_day|manual}` (Compose service, Ofelia, K8s CronJob, or `uv run`)
 - **Each run:** invoke graph → write `data/state.json` atomically → exit
-- **No auto-respawn** on crash (equivalent to launchd `KeepAlive: false`)
+- **No auto-respawn** of one-shot jobs on crash (long-running Compose services use `restart: unless-stopped`)
 - **Skip logging:** market-closed skips → `logs/scheduler.log`
 - **Application logs:** `logs/app.log` (see `logging_config.py`)
 
@@ -455,6 +463,8 @@ personal-investment-assistant/
 uv run pia-run --run-type pre_market
 uv run pia-run --run-type midday
 uv run pia-run --run-type end_of_day
+# Compose:
+# podman-compose -f docker/compose.yml run --rm pia-run --run-type manual
 ```
 
 Wraps Monitor `graph.ainvoke()` with the correct `run_type`, persists final state to `data/state.json`, and exits with a non-zero code only on fatal failure.
@@ -463,150 +473,29 @@ Manual development uses `uv run pia-graph` (same Monitor pipeline, interactive R
 
 ---
 
-### macOS — launchd
+### Home — Docker / Podman Compose
 
-Use a **launchd user agent** with calendar intervals — one plist per scheduled run, or one plist with multiple `StartCalendarInterval` entries. Each invocation runs `pia-run` as a one-shot job (not a long-running daemon).
-
-#### Plist template (`deploy/launchd/com.personalinvestmentassistant.pre-market.plist`)
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.personalinvestmentassistant.pre-market</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-run</string>
-        <string>--run-type</string>
-        <string>pre_market</string>
-    </array>
-
-    <key>WorkingDirectory</key>
-    <string>/ABS/PATH/TO/personal-investment-assistant</string>
-
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>8</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
-
-    <key>StandardOutPath</key>
-    <string>/ABS/PATH/TO/personal-investment-assistant/logs/stdout.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>/ABS/PATH/TO/personal-investment-assistant/logs/stderr.log</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin</string>
-        <key>TZ</key>
-        <string>Europe/Rome</string>
-    </dict>
-</dict>
-</plist>
-```
-
-Repeat for `midday` (13:00) and `end_of_day` (17:30), or maintain three separate plists.
-
-#### Install (macOS)
+Canonical guide: [`docs/compose.md`](docs/compose.md). Helper: [`docker/up.sh`](docker/up.sh).
 
 ```bash
-cp deploy/launchd/*.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalinvestmentassistant.pre-market.plist
-# repeat for each plist
+cp .env.example .env
+# Podman containers → host Ollama:
+#   OLLAMA_BASE_URL=http://host.containers.internal:11434
+./docker/up.sh
 ```
 
-#### Stop (macOS)
-
-```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalinvestmentassistant.pre-market.plist
-```
-
-Stop scheduled runs manually before using resource-intensive local apps (e.g. a DAW on macOS) — there is no automatic conflict detection.
-
----
-
-### Linux — systemd user timers
-
-Use **systemd user units**: one oneshot service plus one timer per scheduled run. Install to `~/.config/systemd/user/`.
-
-#### Service unit (`deploy/systemd/pia-run@.service`)
-
-Template unit — one invocation per run type:
-
-```ini
-[Unit]
-Description=Personal Investment Assistant — pipeline run (%i)
-After=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=/ABS/PATH/TO/personal-investment-assistant
-EnvironmentFile=/ABS/PATH/TO/personal-investment-assistant/.env
-Environment=TZ=Europe/Rome
-ExecStart=/ABS/PATH/TO/personal-investment-assistant/.venv/bin/pia-run --run-type %i
-StandardOutput=append:/ABS/PATH/TO/personal-investment-assistant/logs/stdout.log
-StandardError=append:/ABS/PATH/TO/personal-investment-assistant/logs/stderr.log
-```
-
-Each timer triggers the service instance, e.g. `pia-run@pre_market.service`.
-
-#### Timer unit example (`deploy/systemd/pia-pre-market.timer`)
-
-```ini
-[Unit]
-Description=Personal Investment Assistant — pre-market run (08:00 CET)
-
-[Timer]
-OnCalendar=*-*-* 08:00:00
-Persistent=true
-Unit=pia-run@pre_market.service
-
-[Install]
-WantedBy=timers.target
-```
-
-Repeat for `pia-midday.timer` (13:00) and `pia-end-of-day.timer` (17:30).
-
-#### Install (Linux)
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp deploy/systemd/* ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now pia-pre-market.timer pia-midday.timer pia-end-of-day.timer
-loginctl enable-linger "$USER"   # optional: run timers when not logged in
-```
-
-#### Stop (Linux)
-
-```bash
-systemctl --user disable --now pia-pre-market.timer pia-midday.timer pia-end-of-day.timer
-```
+Default stack: `pia-web` + `pia-bot` + one-shot `pia-run` on `up`. Optional `--profile schedule` (Ofelia) replaces in-process APScheduler — set `PIA_MONITOR_SCHEDULER=false`. Optional `--profile stub` / `--profile gpu` for LLM backends other than host Ollama.
 
 ---
 
 ### Phase 2 — Advisor daemon (`main.py` / `pia-bot`)
 
-The decision-assistant features require a **persistent process** with Telegram polling and optional in-process scheduling:
-
-| Platform | Mechanism |
-|---|---|
-| macOS | launchd user agent with `KeepAlive: false`, started manually or at login |
-| Linux | `systemd` user service (`pia-bot.service`), not a timer |
-
-Timer-only deployment (phase 1 deploy) runs **Monitor mode only** — no `/ask`, `/brief`, or `/stop`. Stop scheduled runs via `launchctl bootout` or `systemctl --user disable`. Start the advisor daemon separately when you want interactive decision support.
+The decision-assistant features require a **persistent process** with Telegram polling and optional in-process scheduling. Home packaging runs `pia-bot` as a Compose service; development uses `uv run pia-bot`.
 
 The daemon can either:
-- **Trigger Monitor runs** via `APScheduler` (replaces external timers), or
-- **Coexist** with launchd/systemd timers — Advisor reads `state.json` written by `pia-run`
+
+- **Trigger Monitor runs** via `APScheduler` when `PIA_MONITOR_SCHEDULER=true`, or
+- **Defer scheduling** to Compose `pia-web`, Ofelia, or K8s CronJobs — set `PIA_MONITOR_SCHEDULER=false` on `pia-bot` (Compose default)
 
 See [Advisor Mode](#advisor-mode-on-demand-reasoning) and [Telegram Bot Commands](#telegram-bot-commands).
 
@@ -728,7 +617,7 @@ Phase 3 adds **persisted** memory, **proactive** brief delivery, **live quotes**
 
 ## Telegram Bot Commands
 
-> **Phase 2** — requires long-running `main.py` / `pia-bot` daemon. Not available in timer-only deployment.
+> **Phase 2** — requires long-running `main.py` / `pia-bot` daemon (Compose service or `uv run pia-bot`).
 
 All commands verify the sender matches `TELEGRAM_CHAT_ID` — unauthorized requests are silently ignored.
 
@@ -743,7 +632,7 @@ Plain-text messages (no command) may be treated as `/ask` shorthand in a future 
 
 ### `/stop` implementation
 
-Shutting down must stop all async work and exit cleanly (`KeepAlive: false` — launchd will not restart):
+Shutting down must stop all async work and exit cleanly (Compose restarts `pia-bot` unless the stack is stopped):
 
 ```python
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -878,7 +767,7 @@ A live read-only dashboard rendered with `rich` in a separate terminal. It reads
 uv run python src/console.py
 ```
 
-`q` quits the console only — the service keeps running under launchd.
+`q` quits the console only — Compose / `pia-web` / `pia-bot` keep running.
 
 ### Layout
 
@@ -1205,7 +1094,7 @@ PIA_WEB_TOKEN=
 - [ ] Full graph run produces `data/state.json` with signals
 - [ ] Telegram bot sends a test notification to `TELEGRAM_CHAT_ID` (when configured)
 - [ ] Console displays `state.json` without error
-- [ ] launchd timers or systemd timers fire `pia-run` at expected times (post-deploy)
+- [ ] Compose default stack schedules Monitor via `pia-web` APScheduler (or Ofelia / K8s CronJobs when configured)
 
 **Phase 2 — Advisor mode**
 
@@ -1223,7 +1112,7 @@ PIA_WEB_TOKEN=
 - [x] Pre-market run triggers proactive `/brief` when `PROACTIVE_BRIEF_ENABLED=true` (hook in `run_once.py`; live dispatch requires Telegram/email configured)
 - [x] Advisor `/ask` includes live quote snapshot for mentioned tickers (price, change %, as-of)
 - [x] Advisor `/ask` and `/brief` include valuation metrics when enabled (trailing P/E, forward P/E, PEG)
-- [ ] `pia-bot` installed and running via launchd (macOS) or systemd (Linux) — install scripts ready; run `./deploy/install-pia-bot-macos.sh` when validated
+- [ ] `pia-bot` running via Compose (`./docker/up.sh`) or `uv run pia-bot` for local validation
 - [x] Proactive brief does not duplicate the standard Monitor notification when `PROACTIVE_BRIEF_SKIP_IF_NOTIFY=true`
 - [x] Ad-hoc ticker analysis for symbols not on the watchlist (`ADVISOR_ADHOC_ANALYSIS`)
 - [x] Indicator scan for comparative questions (`ADVISOR_SCAN_*`, `data/advisor_scan_universe.yaml`)
@@ -1340,27 +1229,16 @@ PROACTIVE_BRIEF_VIA=telegram   # telegram | email | both
 - **Monitor pipeline unchanged** — no fundamentals in `state.json` or scheduled notifications
 - Config: `ADVISOR_FETCH_FUNDAMENTALS=true` (default true)
 
-### 5. Install `pia-bot` service (Advisor daemon)
+### 5. Run `pia-bot` (Advisor daemon)
 
-**Problem:** Phase 2 provides templates only; Advisor must run persistently for Telegram.
+**Problem:** Advisor must run persistently for Telegram.
 
 **Design:**
 
-- **macOS:** install `deploy/launchd/com.personalinvestmentassistant.bot.plist` to `~/Library/LaunchAgents/`, replace `/ABS/PATH/…`, then:
-
-```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalinvestmentassistant.bot.plist
-```
-
-- **Linux:** install `deploy/systemd/pia-bot.service` to `~/.config/systemd/user/`, then:
-
-```bash
-systemctl --user enable --now pia-bot.service
-```
-
-- Logs: `logs/bot-stdout.log`, `logs/bot-stderr.log`
-- Install **after** Phase 3 features are validated locally via `uv run pia-bot`
-- Monitor scheduled runs remain separate (`pia-run` timers) — `pia-bot` does not replace them
+- **Home:** Compose service `pia-bot` via `./docker/up.sh` / [`docs/compose.md`](docs/compose.md)
+- **Develop:** `uv run pia-bot` after local validation
+- Logs: Compose named volume `pia-logs`, or repo `logs/` when using `uv`
+- Monitor schedule defaults to APScheduler in `pia-web` — set `PIA_MONITOR_SCHEDULER=false` on `pia-bot` when web owns the schedule (Compose default)
 
 ### Phase 3 build steps
 
@@ -1369,7 +1247,7 @@ systemctl --user enable --now pia-bot.service
 26. `src/tools/quote_tool.py` — on-demand quote fetch; wire into `advisor.py`
 27. Proactive brief hook in `run_once.py` + config flags
 28. `src/tools/fundamentals_tool.py` — on-demand P/E and PEG; Advisor prompt block only
-29. Install and document `pia-bot` launchd/systemd service (final deploy step for Advisor)
+29. Document Compose home packaging for `pia-bot` / `pia-web` (final deploy step for Advisor)
 30. Manual smoke tests — Phase 3 checklist
 
 ---
@@ -1422,9 +1300,10 @@ Browser  ←HTTP→  pia-web (FastAPI or Starlette)
 
 ### Deployment
 
-- Run manually during development
-- Optional: launchd/systemd user service `pia-web.service` (separate from `pia-bot` and `pia-run`)
-- Can run alongside `pia-bot` — web Advisor and Telegram Advisor share `advisor_history.json` if same session id is used (future refinement)
+- **Home:** Compose `pia-web` + `pia-bot` ([`docs/compose.md`](docs/compose.md), `./docker/up.sh`)
+- **Develop:** `uv run pia-web` (and optional `uv run pia-bot`)
+- **Cluster:** Kubernetes / OpenShift Deployments ([`docs/kubernetes.md`](docs/kubernetes.md), [`docs/openshift.md`](docs/openshift.md))
+- Can run alongside Telegram Advisor — web Advisor and Telegram Advisor share `advisor_history.json` if same session id is used (future refinement)
 
 ### Phase 4 build steps
 
@@ -1432,7 +1311,7 @@ Browser  ←HTTP→  pia-web (FastAPI or Starlette)
 37. Dashboard page (read `state.json`)
 38. Advisor chat page (POST ask/brief, SSE or poll for progress, full-length replies in UI)
 39. `pia-web` entry in `pyproject.toml`; config vars in `.env.example`
-40. Optional `deploy/` service unit for `pia-web`
+40. Compose / K8s packaging for `pia-web` (home + cluster)
 41. Manual smoke tests — Phase 4 checklist
 
 ---
@@ -1592,10 +1471,10 @@ Split into **5a** (Compose) then **5b** (Kubernetes).
 12. `run_graph.py` + `run_once.py` + `state_persistence.py`
 13. Manual smoke tests — Monitor checklist
 
-**Deployment — timer-only Monitor runs** ✅ (templates ready; install when project is complete)
+**Deployment — home Compose + cluster CronJobs** ✅
 
-14. `deploy/launchd/` — macOS calendar plists for three daily runs
-15. `deploy/systemd/` — Linux user timers + oneshot service units
+14. `docker/` Compose stack — `pia-web` APScheduler + `pia-bot` (+ optional Ofelia)
+15. `deploy/k8s/` CronJobs for scheduled `pia-run` (cluster)
 16. `src/console.py` — rich terminal dashboard
 
 **Phase 2 — Advisor mode (decision support)** ✅
@@ -1605,7 +1484,7 @@ Split into **5a** (Compose) then **5b** (Kubernetes).
 19. `run_advisor.py` — interactive CLI REPL (`pia-advisor`)
 20. `bot/telegram_handlers.py` — `/brief`, `/ask`, `/status`, `/stop`
 21. `main.py` — long-running daemon (`pia-bot`) with Telegram polling
-22. Deploy templates for `pia-bot` (launchd + systemd) — install deferred to Phase 3
+22. Compose `pia-bot` service (home packaging) — see `docs/compose.md`
 23. Manual smoke tests — Advisor checklist
 
 **Phase 3 — Advisor production & live data** ✅
@@ -1616,8 +1495,8 @@ Split into **5a** (Compose) then **5b** (Kubernetes).
 27. Proactive `/brief` after pre-market run (`PROACTIVE_BRIEF_*`) ✅
 28. `advisor_on_demand.py`, `advisor_scan.py` — ad-hoc tickers + indicator scans ✅
 29. `fundamentals_tool.py` — on-demand trailing/forward P/E and PEG in Advisor prompts ✅
-30. Install scripts `deploy/install-pia-bot-macos.sh` / `install-pia-bot-linux.sh` ✅ (service bootstrap deferred until operator runs script)
-31. Manual smoke tests — Phase 3 checklist ✅ (2026-06-03; `pia-bot` launchd/systemd install still operator step)
+30. Compose helper `docker/up.sh` + docs for home packaging ✅
+31. Manual smoke tests — Phase 3 checklist ✅ (2026-06-03; home deploy via Compose)
 
 **Phase 4 — Web application (browser UI)** ✅
 
@@ -1694,9 +1573,9 @@ dependencies = [
 - [python-telegram-bot docs](https://python-telegram-bot.org/)
 - [yfinance docs](https://pypi.org/project/yfinance/)
 - [rich docs](https://rich.readthedocs.io/)
-- [launchd plist manual](https://www.launchd.info/)
-- [systemd.timer man page](https://www.freedesktop.org/software/systemd/man/systemd.timer.html)
 - [vLLM docs](https://docs.vllm.ai/)
+- [Podman](https://podman.io/) / [Docker Compose](https://docs.docker.com/compose/)
+- [Ollama](https://ollama.com/)
 - [Anthropic API](https://docs.anthropic.com/)
 - [OpenAI API](https://platform.openai.com/docs/)
 - [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)

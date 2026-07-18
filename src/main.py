@@ -85,11 +85,11 @@ def _parse_args() -> None:
         epilog=(
             "Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.\n"
             "With PIA_MONITOR_SCHEDULER=true (default), also runs Monitor at 08:00/13:00/17:30.\n"
-            "Set PIA_MONITOR_SCHEDULER=false when using launchd/K8s CronJobs or Ofelia.\n\n"
+            "Set PIA_MONITOR_SCHEDULER=false when using K8s CronJobs or Compose Ofelia.\n\n"
             "Telegram commands: /start  /brief  /ask  /clear  /status  /stop\n\n"
-            "Example:\n"
-            "  uv run pia-bot\n\n"
-            "Install as a service: deploy/install-pia-bot-macos.sh or install-pia-bot-linux.sh"
+            "Examples:\n"
+            "  uv run pia-bot\n"
+            "  ./docker/up.sh   # home stack: pia-web + pia-bot (see docs/compose.md)"
         ),
     )
     parser.parse_args()
