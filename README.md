@@ -129,17 +129,41 @@ Edit separate files under `watchlists/`:
 
 ## LLM providers
 
-Default is **Ollama on the host**. For cloud / SOTA APIs set in `.env`:
+Default is **Ollama on the host** (see Quick start). For cloud / SOTA APIs, change `.env` and restart `pia-web` / `pia-bot`. Watchlist tickers, signals, and headlines are sent to the provider you choose.
+
+### Anthropic (example)
+
+Use a cloud Claude model for everything:
 
 ```bash
-PIA_LLM_PROVIDER=anthropic          # or openai / vllm
-# or split:
-PIA_LLM_MONITOR_PROVIDER=ollama
-PIA_LLM_ADVISOR_PROVIDER=anthropic
-ANTHROPIC_API_KEY=...
+PIA_LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...          # from console.anthropic.com
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
 ```
 
-vLLM / OpenAI-compatible (Compose `gpu`, Kubernetes, or OpenShift AI):
+Or keep Monitor cheap/local and use Anthropic only for Advisor:
+
+```bash
+PIA_LLM_PROVIDER=ollama               # default fallback
+PIA_LLM_MONITOR_PROVIDER=ollama
+PIA_LLM_ADVISOR_PROVIDER=anthropic
+OLLAMA_MODEL=qwen3:8b                 # still needed for Monitor
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+```
+
+Compose still needs a reachable `OLLAMA_BASE_URL` if Monitor (or either side) uses Ollama. With `PIA_LLM_PROVIDER=anthropic` alone, host Ollama is optional.
+
+### OpenAI
+
+```bash
+PIA_LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+# OPENAI_BASE_URL=   # leave empty for api.openai.com
+```
+
+### vLLM / OpenAI-compatible (Compose `gpu`, Kubernetes, or OpenShift AI)
 
 ```bash
 PIA_LLM_PROVIDER=vllm
@@ -153,8 +177,6 @@ Inside Compose/Podman containers pointing at **host** Ollama, use:
 ```bash
 OLLAMA_BASE_URL=http://host.containers.internal:11434
 ```
-
-Cloud mode sends watchlist tickers, signals, and headlines to the provider.
 
 ## Agent skills
 
