@@ -10,6 +10,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.config import PROJECT_ROOT
+from src.tools.risk_metrics import compute_risk_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,12 @@ def snapshot_market_row(frame: pd.DataFrame, ticker: str) -> dict:
     else:
         as_of = str(index_value)
 
+    risk = compute_risk_metrics(
+        frame["close"],
+        window=DEFAULT_PERIOD,
+        benchmark=None,
+    )
+
     return {
         "ticker": ticker,
         "as_of": as_of,
@@ -189,4 +196,7 @@ def snapshot_market_row(frame: pd.DataFrame, ticker: str) -> dict:
         "volume": float(latest["volume"]),
         "candles": len(frame),
         "ytd_return_pct": ytd_return_pct(frame),
+        "std_dev_ann_pct": risk.get("std_dev_ann_pct"),
+        "max_drawdown_pct": risk.get("max_drawdown_pct"),
+        "risk_window": DEFAULT_PERIOD,
     }

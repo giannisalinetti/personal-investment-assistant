@@ -1,6 +1,6 @@
 # Deploy with Docker / Podman Compose
 
-**Home packaging** for PIA (Phase **5a**). Short pointer: [`docker/README.md`](../docker/README.md). Helper: [`docker/up.sh`](../docker/up.sh).
+**Home packaging** for PIA (Phase **5a**). Short pointer: [`docker/README.md`](../docker/README.md). Helpers: [`docker/up.sh`](../docker/up.sh) and root `Makefile` (`make up`).
 
 Architecture context: [agent_architecture.md](agent_architecture.md). For Kubernetes / OpenShift see [kubernetes.md](kubernetes.md) and [openshift.md](openshift.md).
 
@@ -30,6 +30,7 @@ One-shot helper (builds image + default `up`):
 
 ```bash
 ./docker/up.sh
+# same as: make up
 ```
 
 ## Build images
@@ -84,6 +85,7 @@ PIA_MONITOR_SCHEDULER=true
 
 ```bash
 ./docker/up.sh
+# same as: make up
 # or: podman-compose -f docker/compose.yml up -d
 ```
 

@@ -83,6 +83,7 @@ cp .env.example .env
 #   Docker Desktop: OLLAMA_BASE_URL=http://host.docker.internal:11434
 
 ./docker/up.sh
+# same as: make up
 # or: podman-compose -f docker/compose.yml up -d
 ```
 

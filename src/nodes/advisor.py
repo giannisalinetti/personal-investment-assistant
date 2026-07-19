@@ -28,6 +28,7 @@ from src.tools.fundamentals_tool import fetch_fundamentals_batch
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
 from src.tools.performance_tool import get_performance, rank_performance
 from src.tools.quote_tool import get_quote
+from src.tools.risk_tool import get_risk
 from src.skills import activated_skill_names, format_skills_block, select_skills
 from src.telemetry import start_span
 
@@ -652,6 +653,9 @@ def _build_prompt(
         "asset_class=etf|stock|etc, period=1wk|1mo|3mo|ytd|1y) or get_performance for one ticker. "
         "Cite only return_pct from tool results — never invent percentages or crown a winner "
         "from RSI/MACD alone\n"
+        "- Volatility / risk (std deviation, beta, max drawdown): call get_risk "
+        "(period=6mo|1y; optional benchmark). Use the returned std_dev_ann_pct, "
+        "max_drawdown_pct, beta, and named benchmark — do not invent risk figures\n"
         "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for stock expensive/cheap questions only\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
         "- Do not invent prices, RSI, P/E, PEG values, headlines, or returns not present in context/tools\n"
@@ -798,7 +802,7 @@ def _invoke_advisor_sync(prompt: str) -> str:
             llm,
             system=system,
             user=user,
-            tools=[get_quote, get_performance, rank_performance],
+            tools=[get_quote, get_performance, rank_performance, get_risk],
             max_rounds=8 if "=== Task ===" in user else 6,
         )
     response = llm.invoke(prompt)

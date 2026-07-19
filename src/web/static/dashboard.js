@@ -50,6 +50,7 @@
     const bullish = d.bullish || [];
     const bearish = d.bearish || [];
     const headlines = d.headlines || [];
+    const assetClass = String(signal.asset_class || d.asset_class || "").toLowerCase();
 
     let flags = "";
     for (const item of bullish) {
@@ -87,6 +88,12 @@
         <div class="detail-item"><span class="label">Close</span>${formatNumber(d.close, 2)}</div>
         <div class="detail-item"><span class="label">As of</span>${formatAsOf(d.as_of)}</div>
         <div class="detail-item"><span class="label">YTD</span>${formatPct(d.ytd_return_pct)}</div>
+        ${
+          assetClass === "etf" || assetClass === "etc"
+            ? `<div class="detail-item"><span class="label">Vol (6mo)</span>${formatPct(d.std_dev_ann_pct)}</div>
+        <div class="detail-item"><span class="label">Max DD (6mo)</span>${formatPct(d.max_drawdown_pct)}</div>`
+            : ""
+        }
         <div class="detail-item"><span class="label">Confidence</span>${escapeHtml(signal.confidence)}</div>
         <div class="detail-item"><span class="label">RSI 14</span>${formatNumber(indicators.rsi_14, 1)}</div>
         <div class="detail-item"><span class="label">MACD</span>${formatNumber(indicators.macd, 3)}</div>

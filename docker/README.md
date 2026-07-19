@@ -26,9 +26,22 @@ cp .env.example .env
 #   OLLAMA_BASE_URL=http://host.docker.internal:11434
 
 ./docker/up.sh
+# same as: make up
 ```
 
 Dashboard: http://127.0.0.1:8765
+
+`./docker/up.sh` (and the root `Makefile`) pick Podman or Docker and a Compose provider automatically.
+
+| Command | Equivalent |
+|---------|------------|
+| `make up` / `./docker/up.sh` | Build + start default stack (host Ollama) |
+| `make build` | Build `localhost/pia:local` only |
+| `make down` | Stop Compose stack |
+| `make logs` | Follow `pia-web` / `pia-bot` logs |
+| `make stub` | Stub profile (no GPU / no Ollama) |
+| `make gpu` | GPU vLLM profile |
+| `make help` | List commands |
 
 Equivalent manual commands:
 
@@ -38,6 +51,13 @@ podman-compose -f docker/compose.yml up -d
 ```
 
 ## Quick start — stub (no GPU, no Ollama)
+
+```bash
+make stub
+# or: ./docker/up.sh stub
+```
+
+Manual equivalent:
 
 ```bash
 podman build -t localhost/pia:local -f docker/Dockerfile .

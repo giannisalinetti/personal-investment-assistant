@@ -9,7 +9,7 @@ This document explains the LangGraph **Monitor** pipeline and the separate **Adv
 | Mode | Trigger | LLM role | Purpose |
 |------|---------|----------|---------|
 | **Monitor** | Schedule / Refresh / `pia-run` | Fast structured calls (`get_llm()`, reasoning off on Ollama); **no** `@tool` | Detect changes, score news, emit alerts |
-| **Advisor** | Web / Telegram / CLI on demand | Deliberative (`get_advisor_llm()`) + optional **tool calls** (`get_quote`, `get_performance`, `rank_performance`) | Interpret signals, answer questions, daily brief |
+| **Advisor** | Web / Telegram / CLI on demand | Deliberative (`get_advisor_llm()`) + optional **tool calls** (`get_quote`, `get_performance`, `rank_performance`, `get_risk`) | Interpret signals, answer questions, daily brief |
 
 ```mermaid
 flowchart TB
@@ -36,7 +36,7 @@ Both modes share:
 
 - Watchlists: [`watchlists/stock.yaml`](../watchlists/stock.yaml), [`etf.yaml`](../watchlists/etf.yaml), [`etc.yaml`](../watchlists/etc.yaml) (defaults; Compose mounts read-only)
 - Optional UI overrides: `data/watchlists_override.json` on the data volume — merged in [`src/config.py`](../src/config.py) `load_watchlists()` via [`src/watchlist_overlay.py`](../src/watchlist_overlay.py); edited from Web **Settings**
-- Persisted Monitor output: `data/state.json` ([`src/state_persistence.py`](../src/state_persistence.py))
+- Persisted Monitor output: `data/state.json` ([`src/state_persistence.py`](../src/state_persistence.py)); market snapshots include 6mo `std_dev_ann_pct` / `max_drawdown_pct` (dashboard shows them for ETF/ETC expand panels; beta stays Advisor-only via `get_risk`)
 - LLM factory: [`src/llm.py`](../src/llm.py) (`ollama` | `anthropic` | `openai` / `vllm`)
 
 ## Monitor LangGraph
@@ -128,7 +128,7 @@ flowchart TB
   ask --> resolve --> fetch --> loop
   stateFile[data_state.json] --> loop
   skills[.agents_skills] --> resolve
-  tools[get_quote_get_performance_rank_performance]
+  tools[get_quote_get_performance_rank_performance_get_risk]
   loop -->|"model_tool_call"| tools
   tools -->|"ToolMessage_JSON"| loop
   loop --> answer[Final_text_answer]
@@ -151,8 +151,9 @@ When `ADVISOR_FETCH_QUOTES=true` (default), Advisor binds LangChain tools via `l
 | `get_quote` | [`src/tools/quote_tool.py`](../src/tools/quote_tool.py) `@tool` | Needs live price, daily change %, volume, or currency for a ticker | JSON string (`ticker`, `price`, `change_pct`, `volume`, `currency`, `as_of`) |
 | `get_performance` | [`src/tools/performance_tool.py`](../src/tools/performance_tool.py) `@tool` | Single-ticker period return (`1wk` / `1mo` / `3mo` / `ytd` / `1y`) | JSON (`return_pct`, start/end prices & dates, or `error`) |
 | `rank_performance` | same module `@tool` | Best/worst across watchlist or an asset class | JSON (`ranked` by `return_pct` desc, `errors`) |
+| `get_risk` | [`src/tools/risk_tool.py`](../src/tools/risk_tool.py) `@tool` | Volatility / beta / max drawdown (`6mo` / `1y`) | JSON (`std_dev_ann_pct`, `max_drawdown_pct`, `beta`, `benchmark`, …) |
 
-Live quotes and period returns are **not** pre-fetched into the prompt when tools are enabled — the model must call them. Look for log lines `Advisor tool round N: get_quote` / `get_performance` / `rank_performance`.
+Live quotes, period returns, and risk stats are **not** pre-fetched into the Advisor prompt when tools are enabled — the model must call them. Look for log lines `Advisor tool round N: get_quote` / `get_performance` / `rank_performance` / `get_risk`. The dashboard already surfaces Monitor’s **6mo** std / max drawdown for ETF/ETC rows; use `get_risk` for `1y` or beta. See [`plans/get_risk_tool.md`](plans/get_risk_tool.md).
 
 **Asset-class hard scope (Advisor `/ask`):** when the question clearly names ETFs, stocks, or ETCs, watchlist + Monitor signals in the prompt are filtered to that class only (so a stock like `MU` cannot be cited as an ETF). Skills activate for the scoped class. Conversation history that mentions out-of-scope tickers is stripped when a class scope is active.
 
