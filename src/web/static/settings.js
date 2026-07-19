@@ -2,6 +2,7 @@
   const editors = document.getElementById("watchlist-editors");
   const statusEl = document.getElementById("settings-status");
   const btnResetAll = document.getElementById("btn-reset-all");
+  const btnSavePrefs = document.getElementById("btn-save-prefs");
   const CLASSES = ["stock", "etf", "etc"];
 
   function apiUrl(path) {
@@ -188,5 +189,52 @@
     await load();
   });
 
-  load().catch((err) => showStatus(String(err), true));
+  function applyPreferences(data) {
+    const horizon = document.getElementById("pref-horizon");
+    const risk = document.getElementById("pref-risk");
+    const currency = document.getElementById("pref-currency");
+    const ucits = document.getElementById("pref-ucits");
+    const notes = document.getElementById("pref-notes");
+    if (horizon) horizon.value = data.horizon || "long";
+    if (risk) risk.value = data.risk_tolerance || "moderate";
+    if (currency) currency.value = data.base_currency || "EUR";
+    if (ucits) ucits.checked = data.prefer_ucits !== false;
+    if (notes) notes.value = data.notes || "";
+  }
+
+  async function loadPreferences() {
+    const res = await apiFetch("/api/settings/preferences");
+    if (!res.ok) {
+      showStatus("Failed to load investor profile", true);
+      return;
+    }
+    applyPreferences(await res.json());
+  }
+
+  btnSavePrefs?.addEventListener("click", async () => {
+    const payload = {
+      horizon: document.getElementById("pref-horizon")?.value || "long",
+      risk_tolerance: document.getElementById("pref-risk")?.value || "moderate",
+      base_currency: document.getElementById("pref-currency")?.value || "EUR",
+      prefer_ucits: !!document.getElementById("pref-ucits")?.checked,
+      notes: document.getElementById("pref-notes")?.value || "",
+    };
+    const res = await apiFetch("/api/settings/preferences", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = data.detail;
+      showStatus(
+        typeof detail === "string" ? detail : "Failed to save investor profile",
+        true
+      );
+      return;
+    }
+    applyPreferences(data);
+    showStatus("Investor profile saved.");
+  });
+
+  Promise.all([load(), loadPreferences()]).catch((err) => showStatus(String(err), true));
 })();

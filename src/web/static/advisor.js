@@ -79,16 +79,20 @@
   }
 
   function snapshotBeforeLeave() {
-    const userBody = chat.querySelector(".chat-user .body");
-    const assistantBody = chat.querySelector(".chat-assistant .body");
+    const users = chat.querySelectorAll(".chat-user .body");
+    const assistants = chat.querySelectorAll(".chat-assistant .body");
+    const userBody = users.length ? users[users.length - 1] : null;
+    const assistantBody = assistants.length ? assistants[assistants.length - 1] : null;
     if (!userBody) return;
 
+    const pending = readSession()?.pending ?? null;
+    const streaming = Boolean(pending && !assistantBody);
     persistActiveDraft(
       userBody.innerHTML,
       assistantBody ? assistantBody.innerHTML : "",
       {
-        pending: assistantBody ? null : readSession()?.pending ?? null,
-        mode: assistantBody ? "active" : "streaming",
+        pending: streaming ? pending : null,
+        mode: streaming ? "streaming" : "active",
       }
     );
   }
@@ -126,6 +130,15 @@
     document.querySelectorAll(".sidebar-item").forEach((el) => el.classList.remove("active"));
   }
 
+  /** Leave a read-only history view so the next message starts a live accumulating thread. */
+  function leaveHistoryViewIfNeeded() {
+    if (!viewingHistory) {
+      chat.querySelector(".history-note")?.remove();
+      return;
+    }
+    clearMainChat();
+  }
+
   function renderExchange(userHtml, assistantHtml, { readOnly = false } = {}) {
     chatEmpty.hidden = true;
     chat.innerHTML = "";
@@ -152,21 +165,58 @@
     chat.scrollTop = 0;
   }
 
-  function appendUserTurn(text) {
+  function plainTurnToHtml(content) {
+    const text = String(content || "");
+    if (!text.trim()) return "<p></p>";
+    return text
+      .split(/\n\n+/)
+      .map((para) => `<p>${escapeHtml(para).replace(/\n/g, "<br>")}</p>`)
+      .join("");
+  }
+
+  function appendTurnHtml(role, bodyHtml) {
     chatEmpty.hidden = true;
     const div = document.createElement("div");
-    div.className = "chat-turn chat-user";
-    div.innerHTML = `<span class="role">You</span><div class="body prose"><p>${escapeHtml(text)}</p></div>`;
+    div.className = `chat-turn chat-${role === "assistant" ? "assistant" : "user"}`;
+    const label = role === "assistant" ? "Advisor" : "You";
+    div.innerHTML = `<span class="role">${label}</span><div class="body prose">${bodyHtml}</div>`;
     chat.appendChild(div);
+  }
+
+  function appendUserTurn(text) {
+    appendTurnHtml("user", `<p>${escapeHtml(text)}</p>`);
     chat.scrollTop = chat.scrollHeight;
   }
 
   function appendAssistantTurn(html) {
-    const div = document.createElement("div");
-    div.className = "chat-turn chat-assistant";
-    div.innerHTML = `<span class="role">Advisor</span><div class="body prose">${html}</div>`;
-    chat.appendChild(div);
+    appendTurnHtml("assistant", html);
     chat.scrollTop = chat.scrollHeight;
+  }
+
+  function renderThreadFromTurns(turns) {
+    chat.innerHTML = "";
+    chat.appendChild(chatEmpty);
+    if (!turns.length) {
+      chatEmpty.hidden = false;
+      return;
+    }
+    chatEmpty.hidden = true;
+    for (const turn of turns) {
+      const role = turn.role === "assistant" ? "assistant" : "user";
+      appendTurnHtml(role, plainTurnToHtml(turn.content));
+    }
+    viewingHistory = false;
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  async function hydrateThreadFromHistory() {
+    const res = await apiFetch("/api/advisor/history");
+    if (!res.ok) return false;
+    const data = await res.json();
+    const turns = Array.isArray(data.turns) ? data.turns : [];
+    if (!turns.length) return false;
+    renderThreadFromTurns(turns);
+    return true;
   }
 
   function matchesPending(preview, pending) {
@@ -335,6 +385,47 @@
 
   async function restoreSession() {
     const session = readSession();
+    const items = await loadSidebar();
+
+    // Explicitly viewing a sidebar exchange — keep single-pair read-only view.
+    if (session?.mode === "view" && session.exchangeId != null) {
+      if (items.some((item) => item.id === session.exchangeId)) {
+        await selectExchange(session.exchangeId, { fromSidebar: true, skipPersist: true });
+        return;
+      }
+    }
+
+    // Incomplete stream: show full thread + pending user draft if needed.
+    if (session?.pending && !session.draft?.assistantHtml) {
+      const hydrated = await hydrateThreadFromHistory();
+      if (!hydrated && session.draft?.userHtml) {
+        renderExchange(session.draft.userHtml, "", { readOnly: false });
+      } else if (hydrated && session.draft?.userHtml) {
+        // Pending ask may not be persisted yet — append the in-flight user turn.
+        appendTurnHtml("user", session.draft.userHtml);
+        chat.scrollTop = chat.scrollHeight;
+      }
+      selectedExchangeId = session.exchangeId ?? null;
+      currentStream = session.stream ?? null;
+      showStatus("Advisor may still be working on this — check back in a moment or pick History.");
+      const match = items.find((item) => matchesPending(item.preview, session.pending));
+      if (match) {
+        selectedExchangeId = match.id;
+        highlightSidebar(match.id);
+      }
+      return;
+    }
+
+    // Default: show the full persisted thread in the main pane.
+    const hydrated = await hydrateThreadFromHistory();
+    if (hydrated) {
+      hideStatus();
+      if (items.length) {
+        selectedExchangeId = items[0].id;
+        highlightSidebar(items[0].id);
+      }
+      return;
+    }
 
     if (session?.draft?.userHtml) {
       renderExchange(
@@ -344,35 +435,8 @@
       );
       selectedExchangeId = session.exchangeId ?? null;
       currentStream = session.stream ?? null;
-      if (session.pending && !session.draft.assistantHtml) {
-        showStatus("Advisor may still be working on this — check back in a moment or pick History.");
-      } else {
-        hideStatus();
-      }
-    }
-
-    const items = await loadSidebar();
-    if (selectedExchangeId != null) {
-      highlightSidebar(selectedExchangeId);
-    }
-
-    if (!session) return;
-
-    if (session.exchangeId != null && items.some((item) => item.id === session.exchangeId)) {
-      if (!session.draft?.assistantHtml) {
-        await selectExchange(session.exchangeId, {
-          fromSidebar: session.mode === "view",
-          skipPersist: true,
-        });
-      }
-      return;
-    }
-
-    if (session.pending && !session.draft?.assistantHtml) {
-      const match = items.find((item) => matchesPending(item.preview, session.pending));
-      if (match) {
-        await selectExchange(match.id, { fromSidebar: false });
-      }
+      hideStatus();
+      if (selectedExchangeId != null) highlightSidebar(selectedExchangeId);
     }
   }
 
@@ -380,7 +444,7 @@
     ev.preventDefault();
     const q = questionEl.value.trim();
     if (!q) return;
-    clearMainChat();
+    leaveHistoryViewIfNeeded();
     chatEmpty.hidden = true;
     appendUserTurn(q);
     questionEl.value = "";
@@ -403,12 +467,10 @@
   });
 
   btnBrief?.addEventListener("click", () => {
-    clearMainChat();
+    leaveHistoryViewIfNeeded();
     chatEmpty.hidden = true;
-    const div = document.createElement("div");
-    div.className = "chat-turn chat-user";
-    div.innerHTML = `<span class="role">You</span><div class="body prose"><p><em>Daily brief</em></p></div>`;
-    chat.appendChild(div);
+    appendTurnHtml("user", "<p><em>Daily brief</em></p>");
+    chat.scrollTop = chat.scrollHeight;
     streamAdvisor("brief", "");
   });
 

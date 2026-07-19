@@ -121,6 +121,13 @@ def select_skills(
         add("market-technicals")
         add("news-sentiment")
 
+    if mode == "ask":
+        # Avoid circular import: advisor imports skills at module load.
+        from src.nodes.advisor import asks_capital_allocation
+
+        if asks_capital_allocation(question):
+            add("portfolio-allocation")
+
     return selected
 
 

@@ -6,10 +6,72 @@
   <p class="muted">Configure how PIA runs for this install. Changes that need persistence are stored on the data volume, not in git-tracked defaults.</p>
 
   <nav class="settings-nav" aria-label="Settings sections">
+    <a href="#settings-preferences" class="settings-nav-link">Investor profile</a>
     <a href="#settings-watchlist" class="settings-nav-link">Watchlist</a>
   </nav>
 
   <p id="settings-status" class="settings-status" hidden></p>
+
+  <section id="settings-preferences" class="settings-section" aria-labelledby="settings-preferences-title">
+    <header class="settings-section-header">
+      <div>
+        <h2 id="settings-preferences-title">Investor profile</h2>
+        <p class="muted">
+          Advisor uses this when you ask how to position stated capital.
+          Stored in <code>data/investor_preferences.json</code>.
+        </p>
+      </div>
+    </header>
+    <form id="prefs-form" class="prefs-form">
+      <div class="prefs-grid">
+        <div class="prefs-field">
+          <label class="prefs-label" for="pref-horizon">Horizon</label>
+          <select id="pref-horizon" name="horizon">
+            <option value="short">&lt;3 years</option>
+            <option value="medium">3–10 years</option>
+            <option value="long">10+ years</option>
+          </select>
+          <p class="prefs-hint muted">How long you expect to stay invested</p>
+        </div>
+        <div class="prefs-field">
+          <label class="prefs-label" for="pref-risk">Risk tolerance</label>
+          <select id="pref-risk" name="risk_tolerance">
+            <option value="conservative">Conservative</option>
+            <option value="moderate">Moderate</option>
+            <option value="aggressive">Aggressive</option>
+          </select>
+          <p class="prefs-hint muted">Comfort with volatility and drawdowns</p>
+        </div>
+        <div class="prefs-field">
+          <label class="prefs-label" for="pref-currency">Base currency</label>
+          <select id="pref-currency" name="base_currency">
+            <option value="EUR">EUR</option>
+            <option value="USD">USD</option>
+          </select>
+          <p class="prefs-hint muted">Currency for allocation amounts</p>
+        </div>
+      </div>
+
+      <div class="prefs-field prefs-toggle">
+        <label class="prefs-toggle-label" for="pref-ucits">
+          <input type="checkbox" id="pref-ucits" name="prefer_ucits">
+          <span>
+            <span class="prefs-label">Prefer UCITS / EU listings</span>
+            <span class="prefs-hint muted">When equivalents exist, favor European-listed funds</span>
+          </span>
+        </label>
+      </div>
+
+      <div class="prefs-field prefs-notes">
+        <label class="prefs-label" for="pref-notes">Notes <span class="muted">(optional)</span></label>
+        <textarea id="pref-notes" name="notes" maxlength="500" rows="3" placeholder="e.g. EUR-only brokerage, avoid single-stock concentration"></textarea>
+      </div>
+
+      <div class="prefs-actions">
+        <button type="button" id="btn-save-prefs" class="btn primary">Save profile</button>
+      </div>
+    </form>
+  </section>
 
   <section id="settings-watchlist" class="settings-section" aria-labelledby="settings-watchlist-title">
     <header class="settings-section-header">
@@ -27,5 +89,5 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="/static/settings.js?v=3"></script>
+<script src="/static/settings.js?v=5"></script>
 {% endblock %}

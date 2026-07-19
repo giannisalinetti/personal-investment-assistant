@@ -2,9 +2,9 @@
 
 ## Overview
 
-An autonomous **advisory-only** personal assistant built with **LangGraph** that monitors a user-defined watchlist of stocks and ETFs, performs technical and news-driven analysis, and helps the user **make informed decisions** — not just receive ticker alerts.
+An autonomous **advisory-only personal investment assistant** built with **LangGraph** that monitors a user-defined watchlist of stocks, ETFs, and ETCs, performs technical and news-driven analysis, and helps the user **make informed decisions** — including how to position **stated capital** using investor preferences and verified math.
 
-The agent has **no access to the user's portfolio** — no holdings, balances, cost basis, or broker integration. It reasons only over the watchlist in `watchlist.yaml` and public market data. All output is advisory; the user decides whether to act.
+The agent does **not** import broker holdings, balances, or cost basis. It reasons over the watchlist, optional investor preferences, and public market data. All output is advisory; the user decides whether to act.
 
 **Two operating modes:**
 
@@ -61,6 +61,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 - Resolve conflicts between technical signals and news sentiment
 - Run scenario analysis ("what if rates stay high for 6 months?") with assumptions stated explicitly
 - Answer follow-up questions in natural language via Telegram or CLI
+- Help position **stated capital** (e.g. “how would you distribute €50k?”) using investor preferences, watchlist-first tickers, risk tools, and deterministic allocation math
 - Produce a daily **`/brief`** — macro picture, top conflicts, and what to watch today
 
 **Operational**
@@ -113,7 +114,7 @@ Scheduled runs **inform** ("something changed on AAPL"). Advisor mode **delibera
 ## Non-Goals
 
 - No real-money trading execution (read/analyze only)
-- No portfolio tracking, holdings import, or position sizing — advisory over watchlist only
+- No broker portfolio tracking or holdings import (stated-capital positioning and investor preferences are in scope)
 - No backtesting engine (v1)
 - No **PIA-hosted multi-tenant SaaS** (billing, per-user isolation, support) — single-operator deployments only unless explicitly expanded later
 - No mandatory cloud LLM — external API calls are **opt-in** (Phase 4.5); default is local or self-hosted vLLM
@@ -566,7 +567,7 @@ async def advisor_respond(
 
 Prompt structure:
 
-1. System: advisory-only, no portfolio access, state assumptions explicitly, disclaimer
+1. System: advisory-only, no broker holdings import, investor preferences + tools, disclaimer
 2. Context block: serialized signals, news summary, watchlist note, suggestions from `state.json`
 3. Watchlist block: tickers + names from `watchlist.yaml`
 4. On-demand blocks (fetched per request, not from Monitor): indicator scan, ad-hoc analysis, live quotes, **valuation metrics**, fresh headlines

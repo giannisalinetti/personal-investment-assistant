@@ -28,6 +28,7 @@ from src.monitor_scheduler import (
 from src.nodes.notifier import DISCLAIMER
 from src.run_once import VALID_RUN_TYPES
 from src.state_persistence import NEXT_RUNS
+from src.investor_preferences import load_preferences, save_preferences
 from src.watchlist_overlay import (
     clear_class_override,
     parse_entries_payload,
@@ -67,6 +68,14 @@ class WatchlistPutBody(BaseModel):
 
 class WatchlistResetBody(BaseModel):
     asset_class: AssetClass | None = None
+
+
+class PreferencesPutBody(BaseModel):
+    horizon: str = "long"
+    risk_tolerance: str = "moderate"
+    base_currency: str = "EUR"
+    prefer_ucits: bool = True
+    notes: str = Field("", max_length=500)
 
 
 @asynccontextmanager
@@ -220,6 +229,20 @@ def create_app() -> FastAPI:
         # passed None, which incorrectly cleared every class.
         clear_class_override(body.asset_class)
         return JSONResponse(settings_snapshot())
+
+    @app.get("/api/settings/preferences")
+    async def api_settings_preferences_get() -> JSONResponse:
+        return JSONResponse(load_preferences().model_dump())
+
+    @app.put("/api/settings/preferences")
+    async def api_settings_preferences_put(body: PreferencesPutBody) -> JSONResponse:
+        from pydantic import ValidationError
+
+        try:
+            saved = save_preferences(body.model_dump())
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+        return JSONResponse(saved.model_dump())
 
     def _page_context(request: Request, active: str) -> dict:
         token = settings.PIA_WEB_TOKEN.strip()

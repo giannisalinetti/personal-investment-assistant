@@ -29,6 +29,7 @@ tool’s `std_dev_ann_pct`, `max_drawdown_pct`, `beta`, and named `benchmark`.
 
 ## Output style
 
-- Emphasize allocation/exposure implications, not company fundamentals
+- Emphasize fund exposure implications (what the ETF holds), not company fundamentals
 - Cite Monitor signals and fresh headlines when explaining moves
-- Keep advice advisory-only; no portfolio allocation percentages unless asked hypothetically with assumptions stated
+- For stated-capital positioning (distribute €X), follow **portfolio-allocation**:
+  preferences, get_risk, and **compute_allocation** — never invent currency amounts

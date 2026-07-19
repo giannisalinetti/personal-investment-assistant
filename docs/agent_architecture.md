@@ -152,8 +152,9 @@ When `ADVISOR_FETCH_QUOTES=true` (default), Advisor binds LangChain tools via `l
 | `get_performance` | [`src/tools/performance_tool.py`](../src/tools/performance_tool.py) `@tool` | Single-ticker period return (`1wk` / `1mo` / `3mo` / `ytd` / `1y`) | JSON (`return_pct`, start/end prices & dates, or `error`) |
 | `rank_performance` | same module `@tool` | Best/worst across watchlist or an asset class | JSON (`ranked` by `return_pct` desc, `errors`) |
 | `get_risk` | [`src/tools/risk_tool.py`](../src/tools/risk_tool.py) `@tool` | Volatility / beta / max drawdown (`6mo` / `1y`) | JSON (`std_dev_ann_pct`, `max_drawdown_pct`, `beta`, `benchmark`, …) |
+| `compute_allocation` | [`src/tools/allocation_tool.py`](../src/tools/allocation_tool.py) `@tool` | Exact currency amounts from weights for stated capital | JSON (`legs[].amount`, `sum_amounts`, `ok`) |
 
-Live quotes, period returns, and risk stats are **not** pre-fetched into the Advisor prompt when tools are enabled — the model must call them. Look for log lines `Advisor tool round N: get_quote` / `get_performance` / `rank_performance` / `get_risk`. The dashboard already surfaces Monitor’s **6mo** std / max drawdown for ETF/ETC rows; use `get_risk` for `1y` or beta. See [`plans/get_risk_tool.md`](plans/get_risk_tool.md).
+Live quotes, period returns, risk stats, and allocation euros are **not** pre-fetched into the Advisor prompt when tools are enabled — the model must call them. Look for log lines `Advisor tool round N: get_quote` / `get_performance` / `rank_performance` / `get_risk` / `compute_allocation`. Investor preferences (`data/investor_preferences.json`, Settings) are injected into every Advisor prompt. See [`plans/get_risk_tool.md`](plans/get_risk_tool.md) and [`plans/allocation_advisor.md`](plans/allocation_advisor.md).
 
 **Asset-class hard scope (Advisor `/ask`):** when the question clearly names ETFs, stocks, or ETCs, watchlist + Monitor signals in the prompt are filtered to that class only (so a stock like `MU` cannot be cited as an ETF). Skills activate for the scoped class. Conversation history that mentions out-of-scope tickers is stripped when a class scope is active.
 

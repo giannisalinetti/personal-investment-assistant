@@ -10,6 +10,7 @@ Operator and architecture guides for Personal Investment Assistant.
 | [openshift.md](openshift.md) | OpenShift + OpenShift AI (vLLM serving) |
 | [plans/get_performance_tool.md](plans/get_performance_tool.md) | Advisor `get_performance` / `rank_performance` |
 | [plans/get_risk_tool.md](plans/get_risk_tool.md) | Advisor `get_risk` (std / beta / max drawdown) |
+| [plans/allocation_advisor.md](plans/allocation_advisor.md) | Stated-capital allocation + investor preferences |
 
 Deep product specification remains in [`../SPEC.md`](../SPEC.md). Env template: [`../.env.example`](../.env.example).
 

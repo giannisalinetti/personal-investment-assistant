@@ -27,6 +27,8 @@ from src.state_persistence import stale_state_warning
 from src.tools.fundamentals_tool import fetch_fundamentals_batch
 from src.tools.news_fetcher import fetch_ticker_headlines, filter_relevant_articles
 from src.tools.performance_tool import get_performance, rank_performance
+from src.investor_preferences import format_preferences_block, load_preferences
+from src.tools.allocation_tool import compute_allocation
 from src.tools.quote_tool import get_quote
 from src.tools.risk_tool import get_risk
 from src.skills import activated_skill_names, format_skills_block, select_skills
@@ -57,6 +59,32 @@ _PERIOD_PERFORMANCE_HINTS = re.compile(
     r"return|returns|gain(?:ed|s)?|lost|down\s+\d|up\s+\d"
     r")\b",
     re.IGNORECASE,
+)
+
+# Stated-capital positioning / personal allocation questions.
+_CAPITAL_ALLOCATION_HINTS = re.compile(
+    r"(?is)("
+    r"\bhow\s+(?:should|would|can|do)\s+i\s+(?:invest|allocate|distribute|split)\b|"
+    r"\b(?:distribute|allocation|allocate|split)\b.{0,40}\b(?:invest(?:ment)?|capital|money|savings|cash)\b|"
+    r"\b(?:invest(?:ment)?|capital|money|savings|cash)\b.{0,40}\b(?:distribute|allocation|allocate|split)\b|"
+    r"(?:€|eur|usd|\$)\s*\d[\d.,]*\s*(?:k|m)?\b.{0,60}\b(?:invest|allocat|distribut|split|portfolio|position)\b|"
+    r"\b(?:invest|allocat|distribut|split|portfolio|position)\b.{0,60}(?:€|eur|usd|\$)\s*\d|"
+    r"\bportfolio\s+(?:allocat|split|weight|construct|build)|"
+    r"\b(?:build|construct)\s+(?:a\s+|my\s+)?portfolio\b|"
+    r"\bposition\s+siz|"
+    r"\bhow\s+much\s+(?:should|to)\s+(?:i\s+)?(?:put|invest|allocat)|"
+    r"\b(?:put|allocate)\s+\d+\s*%\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# ETF/fund holdings breakdown — not personal capital allocation.
+_ETF_HOLDINGS_ALLOCATION_HINTS = re.compile(
+    r"(?i)\b("
+    r"sector\s+allocat|geographic\s+allocat|country\s+allocat|"
+    r"holdings?\s+allocat|allocat(?:ion|e)\s+(?:of|in|across)\s+(?:the\s+)?(?:etf|fund|index)|"
+    r"underlying\s+(?:allocat|exposure)|asset\s+allocat(?:ion)?\s+of\b"
+    r")",
 )
 
 BRIEF_PROMPT = """Produce a compact daily brief for my watchlist.
@@ -187,6 +215,13 @@ def filter_state_by_asset_class(
 def asks_period_performance(question: str) -> bool:
     """True when the user asks for comparative/period returns we may not have computed."""
     return bool(_PERIOD_PERFORMANCE_HINTS.search(question))
+
+
+def asks_capital_allocation(question: str) -> bool:
+    """True when the user asks how to position / distribute stated capital."""
+    if _ETF_HOLDINGS_ALLOCATION_HINTS.search(question):
+        return False
+    return bool(_CAPITAL_ALLOCATION_HINTS.search(question))
 
 
 def period_performance_unavailable_reply(
@@ -632,8 +667,9 @@ def _build_prompt(
     skills_block: str = "",
 ) -> str:
     system = (
-        "You are a personal investment advisor assistant. You help the user think through "
-        "investment decisions — you never execute trades and have no portfolio access.\n"
+        "You are a personal investment advisor. You help the user make informed decisions "
+        "about watchlist instruments and stated capital — you never execute trades and you "
+        "do not import broker holdings.\n"
         "Rules:\n"
         "- Latest Monitor run covers the configured watchlist only\n"
         "- HARD asset-class rule: if the user asks about ETFs, only discuss tickers tagged [etf]; "
@@ -644,7 +680,7 @@ def _build_prompt(
         "- Indicator scan results include a pre-computed exact_leader — always state that ticker and value\n"
         "- On-demand analysis covers explicitly mentioned tickers outside the watchlist\n"
         "- Ground answers in Monitor data, Indicator scan, On-demand analysis, Valuation metrics, "
-        "Fresh headlines, activated Skills, and live quotes from tools\n"
+        "Fresh headlines, Investor preferences, activated Skills, and tool results\n"
         "- When you need a live price or daily change %, call the get_quote tool "
         "(works the same for local Ollama tool-capable models and cloud SOTA providers)\n"
         "- Period / comparative performance (best/worst last week/month, returns, YTD as a ranking): "
@@ -656,12 +692,18 @@ def _build_prompt(
         "- Volatility / risk (std deviation, beta, max drawdown): call get_risk "
         "(period=6mo|1y; optional benchmark). Use the returned std_dev_ann_pct, "
         "max_drawdown_pct, beta, and named benchmark — do not invent risk figures\n"
+        "- Capital allocation / positioning (stated €/$ amount, how to distribute/invest): "
+        "use Investor preferences + watchlist-first (plus tickers the user names). "
+        "Call get_risk for recommended names. Call compute_allocation with weights that sum "
+        "to 100 and cite ONLY the tool's amount fields for currency line items — never invent euros. "
+        "If compute_allocation returns an error, fix weights and retry\n"
         "- Use Valuation metrics (trailing P/E, forward P/E, PEG) for stock expensive/cheap questions only\n"
         "- Prefer citing specific headlines for 'why did X move' questions\n"
-        "- Do not invent prices, RSI, P/E, PEG values, headlines, or returns not present in context/tools\n"
+        "- Do not invent prices, RSI, P/E, PEG values, headlines, returns, or currency amounts "
+        "not present in context/tools\n"
         "- Note when P/E or PEG is unavailable (common for ETFs/ETCs); do not substitute guesses\n"
-        "- Frame output as considerations and trade-offs, not direct buy/sell orders\n"
-        "- State assumptions explicitly when data is incomplete\n"
+        "- Frame output as advisory considerations and trade-offs, not direct buy/sell orders\n"
+        "- State assumptions explicitly only where Investor preferences leave a gap\n"
         "- Be compact: for /ask lead with 1–3 sentences, then at most 5 short bullets\n"
         "- Plain text only — no markdown headings (##), no **bold**, no [markdown](links)"
     )
@@ -711,6 +753,22 @@ def _build_prompt(
                 "Do not invent returns; say the data is unavailable.\n"
             )
 
+    allocation_note = ""
+    prefs = load_preferences()
+    if mode == "ask" and asks_capital_allocation(question):
+        eligible = ", ".join(e.ticker for e in scoped_watchlist) or "(none)"
+        allocation_note = (
+            "=== Capital allocation ===\n"
+            "Propose a mix using Investor preferences and watchlist-first names "
+            f"(eligible: {eligible}; plus tickers the user explicitly names). "
+            f"Prefer base_currency={prefs.base_currency}"
+            + ("; prefer UCITS/EU listings when choose exists" if prefs.prefer_ucits else "")
+            + ". Call get_risk for recommended tickers. "
+            "Call compute_allocation(amount, legs_json, currency) with weights summing to 100; "
+            "cite only tool amount fields for currency lines. "
+            "Explain trade-offs briefly; do not invent euros.\n"
+        )
+
     if mode == "brief":
         watchlist_text = _format_watchlist_by_class(watchlist_block)
         state_text = _format_state_block_by_class(prompt_state, watchlist)
@@ -726,8 +784,13 @@ def _build_prompt(
         parts.extend([scope_note, ""])
     if performance_note:
         parts.extend([performance_note, ""])
+    if allocation_note:
+        parts.extend([allocation_note, ""])
     parts.extend(
         [
+        "=== Investor preferences ===",
+        format_preferences_block(prefs),
+        "",
         "=== Activated skills ===",
         skills_block or "No specialized skills activated.",
         "",
@@ -802,7 +865,13 @@ def _invoke_advisor_sync(prompt: str) -> str:
             llm,
             system=system,
             user=user,
-            tools=[get_quote, get_performance, rank_performance, get_risk],
+            tools=[
+                get_quote,
+                get_performance,
+                rank_performance,
+                get_risk,
+                compute_allocation,
+            ],
             max_rounds=8 if "=== Task ===" in user else 6,
         )
     response = llm.invoke(prompt)
