@@ -35,8 +35,9 @@ x-pia-common: &pia-common
     - pia-data:/app/data
     - pia-logs:/app/logs
     - pia-cache:/app/.cache
-    - ../watchlists:/app/watchlists:ro
-    - ../.agents:/app/.agents:ro
+    # :Z — SELinux relabel (Fedora/RHEL Podman). Harmless on macOS / non-SELinux hosts.
+    - ../watchlists:/app/watchlists:ro,Z
+    - ../.agents:/app/.agents:ro,Z
   working_dir: /app
   networks:
     - pia

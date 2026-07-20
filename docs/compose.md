@@ -182,8 +182,8 @@ flowchart TB
 | `pia-data` | `/app/data` (`state.json`, advisor history, **`watchlists_override.json`**) |
 | `pia-logs` | `/app/logs` |
 | `pia-cache` | `/app/.cache` |
-| bind `watchlists/` | `/app/watchlists` (read-only — YAML defaults; not edited by the Web UI) |
-| bind `.agents/` | `/app/.agents` (read-only) |
+| bind `watchlists/` | `/app/watchlists` (read-only YAML defaults; `:ro,Z` for SELinux) |
+| bind `.agents/` | `/app/.agents` (read-only skills; `:ro,Z` for SELinux) |
 
 ### Watchlist overrides (Settings)
 
@@ -207,6 +207,7 @@ Containers set `PIA_WEB_HOST=0.0.0.0` and publish **8765**. If the port is reach
 | Double Monitor runs | Ofelia **and** `PIA_MONITOR_SCHEDULER=true` |
 | Empty dashboard | No successful Monitor yet — Refresh Monitor or `compose run … pia-run` |
 | Image pull `pia:local` denied | Use `localhost/pia:local` (Podman short-name resolution) |
+| `PermissionError` on `/app/watchlists/*.yaml` (Fedora/RHEL) | SELinux blocked the bind mount. Compose uses `:ro,Z` on `watchlists/` and `.agents/`. Recreate containers (`make down && make up`). If it still fails, ensure host files are world-readable: `chmod -R a+rX watchlists .agents` |
 
 ## Related
 
