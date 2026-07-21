@@ -8,6 +8,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 COMPOSE_FILE="docker/compose.yml"
+COMPOSE_PODMAN="docker/compose.podman.yml"
+COMPOSE_DOCKER="docker/compose.docker.yml"
 
 die() {
   echo "error: $*" >&2
@@ -32,6 +34,11 @@ Commands:
 
 Runtime (Podman preferred, else Docker) and Compose CLI are detected automatically.
 Also available via Makefile: make up | build | down | logs | stub | gpu
+
+Host Ollama networking (default up):
+  Linux Podman — pasta maps 127.0.0.1:11434 to host loopback (Ollama stays on localhost)
+  Docker       — host.docker.internal (Linux Engine: set OLLAMA_HOST=0.0.0.0:11434)
+  Mac Desktop  — host gateway hostname; no pasta / no OLLAMA_HOST change
 EOF
 }
 
@@ -78,7 +85,7 @@ ensure_env() {
   if [[ ! -f .env ]]; then
     if [[ -f .env.example ]]; then
       cp .env.example .env
-      echo "Created .env from .env.example — edit secrets / OLLAMA_BASE_URL before first use."
+      echo "Created .env from .env.example — edit secrets / OLLAMA settings before first use."
     else
       touch .env
     fi
@@ -89,6 +96,21 @@ ensure_env() {
 compose() {
   # shellcheck disable=SC2086
   $COMPOSE_CMD "$@"
+}
+
+# Extra -f overrides for host-Ollama networking (not used for gpu/stub on Podman).
+# Sets COMPOSE_NET_ARGS as an array of -f flags.
+compose_net_args() {
+  local mode="${1:-default}"
+  COMPOSE_NET_ARGS=()
+  if [[ "$RUNTIME" == docker ]]; then
+    COMPOSE_NET_ARGS=(-f "$COMPOSE_DOCKER")
+    return
+  fi
+  # Podman: pasta only on Linux for default (host Ollama) path
+  if [[ "$RUNTIME" == podman && "$(uname -s)" == "Linux" && "$mode" == "default" ]]; then
+    COMPOSE_NET_ARGS=(-f "$COMPOSE_PODMAN")
+  fi
 }
 
 cmd_build() {
@@ -108,29 +130,76 @@ print_up_banner() {
 PIA is up ($mode).
   Dashboard: http://127.0.0.1:8765
 
-Default LLM is host Ollama unless you used stub/gpu.
-  Podman:  OLLAMA_BASE_URL=http://host.containers.internal:11434
-  Docker:  OLLAMA_BASE_URL=http://host.docker.internal:11434
+EOF
+  if [[ "$mode" == stub || "$mode" == "gpu / vLLM" ]]; then
+    cat <<EOF
+LLM is in-stack for this profile (stub or vLLM) — host Ollama is not required.
 
 Full guide: docs/compose.md
 EOF
+    return
+  fi
+
+  if [[ "$RUNTIME" == podman && "$(uname -s)" == "Linux" ]]; then
+    cat <<EOF
+Host Ollama (Linux Podman): pasta maps container 127.0.0.1:11434 → host loopback.
+  Keep Ollama on 127.0.0.1 (default). Compose sets OLLAMA_BASE_URL=http://127.0.0.1:11434
+  No need for OLLAMA_HOST=0.0.0.0.
+
+Full guide: docs/compose.md
+EOF
+  elif [[ "$RUNTIME" == docker ]]; then
+    if [[ "$(uname -s)" == "Linux" ]]; then
+      cat <<EOF
+Host Ollama (Docker Engine on Linux):
+  export OLLAMA_HOST=0.0.0.0:11434   # then restart Ollama
+  Compose sets OLLAMA_BASE_URL=http://host.docker.internal:11434
+  Firewall: bind-all exposes the LAN if port 11434 is open — restrict if needed.
+
+Full guide: docs/compose.md
+EOF
+    else
+      cat <<EOF
+Host Ollama (Docker Desktop): OLLAMA_BASE_URL=http://host.docker.internal:11434
+  Keep Ollama on the Mac host (Metal). No OLLAMA_HOST=0.0.0.0 required.
+
+Full guide: docs/compose.md
+EOF
+    fi
+  else
+    cat <<EOF
+Host Ollama (Podman Desktop / Mac): OLLAMA_BASE_URL=http://host.containers.internal:11434
+  Keep Ollama on the Mac host (Metal).
+
+Full guide: docs/compose.md
+EOF
+  fi
 }
 
 cmd_up() {
   ensure_env
   cmd_build
+  compose_net_args default
   echo "Starting default stack (pia-web + pia-bot + one-shot pia-run) …"
-  compose -f "$COMPOSE_FILE" up -d
+  if [[ ${#COMPOSE_NET_ARGS[@]} -gt 0 ]]; then
+    echo "Networking override: ${COMPOSE_NET_ARGS[*]}"
+  fi
+  compose -f "$COMPOSE_FILE" "${COMPOSE_NET_ARGS[@]}" up -d
   print_up_banner "default / host Ollama"
 }
 
 cmd_down() {
   ensure_env
   echo "Stopping Compose stack …"
-  # Tear down default, stub, and gpu project configs so leftover profiles are removed.
-  compose -f "$COMPOSE_FILE" down --remove-orphans || true
+  compose_net_args default
+  # Tear down default (with net override), stub, and gpu so leftover profiles are removed.
+  compose -f "$COMPOSE_FILE" "${COMPOSE_NET_ARGS[@]}" down --remove-orphans || true
   compose -f "$COMPOSE_FILE" -f docker/compose.stub.yml --profile stub down --remove-orphans 2>/dev/null || true
   compose -f "$COMPOSE_FILE" -f docker/compose.gpu.yml --profile gpu down --remove-orphans 2>/dev/null || true
+  if [[ "$RUNTIME" == docker ]]; then
+    compose -f "$COMPOSE_FILE" -f "$COMPOSE_DOCKER" -f docker/compose.stub.yml --profile stub down --remove-orphans 2>/dev/null || true
+    compose -f "$COMPOSE_FILE" -f "$COMPOSE_DOCKER" -f docker/compose.gpu.yml --profile gpu down --remove-orphans 2>/dev/null || true
+  fi
   echo "Done."
 }
 
@@ -149,7 +218,13 @@ cmd_stub() {
   cmd_build
   cmd_build_stub_image
   echo "Starting stub stack …"
-  compose -f "$COMPOSE_FILE" -f docker/compose.stub.yml --profile stub up -d
+  compose_net_args stub
+  # Podman: no pasta (need Compose network for stub DNS). Docker: still add host-gateway.
+  if [[ ${#COMPOSE_NET_ARGS[@]} -gt 0 ]]; then
+    compose -f "$COMPOSE_FILE" "${COMPOSE_NET_ARGS[@]}" -f docker/compose.stub.yml --profile stub up -d
+  else
+    compose -f "$COMPOSE_FILE" -f docker/compose.stub.yml --profile stub up -d
+  fi
   print_up_banner "stub"
 }
 
@@ -157,7 +232,13 @@ cmd_gpu() {
   ensure_env
   cmd_build
   echo "Starting GPU / vLLM stack …"
-  compose -f "$COMPOSE_FILE" -f docker/compose.gpu.yml --profile gpu up -d
+  compose_net_args gpu
+  # Podman: no pasta (need Compose network for vllm). Docker: still add host-gateway.
+  if [[ ${#COMPOSE_NET_ARGS[@]} -gt 0 ]]; then
+    compose -f "$COMPOSE_FILE" "${COMPOSE_NET_ARGS[@]}" -f docker/compose.gpu.yml --profile gpu up -d
+  else
+    compose -f "$COMPOSE_FILE" -f docker/compose.gpu.yml --profile gpu up -d
+  fi
   print_up_banner "gpu / vLLM"
 }
 

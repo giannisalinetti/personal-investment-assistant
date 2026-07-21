@@ -1,0 +1,35 @@
+# Linux Podman override — Option A (pasta host loopback).
+# Applied by docker/up.sh for default `up` when runtime=podman and OS=Linux.
+# Do NOT use with --profile gpu / stub (those need the Compose bridge for vllm/stub).
+#
+# pasta:-T,11434 maps container 127.0.0.1:11434 → host 127.0.0.1:11434 so host
+# Ollama can stay on loopback (no OLLAMA_HOST=0.0.0.0).
+
+services:
+  pia-web:
+    network_mode: "pasta:-T,11434"
+    networks: !reset
+    environment:
+      PIA_WEB_HOST: "0.0.0.0"
+      PIA_WEB_PORT: "8765"
+      LOG_TO_CONSOLE: "true"
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+
+  pia-run:
+    network_mode: "pasta:-T,11434"
+    networks: !reset
+    environment:
+      PIA_WEB_HOST: "0.0.0.0"
+      PIA_WEB_PORT: "8765"
+      LOG_TO_CONSOLE: "true"
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+
+  pia-bot:
+    network_mode: "pasta:-T,11434"
+    networks: !reset
+    environment:
+      PIA_WEB_HOST: "0.0.0.0"
+      PIA_WEB_PORT: "8765"
+      LOG_TO_CONSOLE: "true"
+      PIA_MONITOR_SCHEDULER: "false"
+      OLLAMA_BASE_URL: http://127.0.0.1:11434

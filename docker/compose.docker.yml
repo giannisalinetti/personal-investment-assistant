@@ -1,0 +1,35 @@
+# Docker override — bridge networking + host.docker.internal via host-gateway.
+# Applied by docker/up.sh whenever runtime=docker (Desktop Mac and Engine Linux).
+#
+# Docker Desktop Mac: host.docker.internal usually reaches host Ollama on 127.0.0.1
+# without changing Ollama. Docker Engine Linux: set OLLAMA_HOST=0.0.0.0:11434 on the
+# host (see docs/compose.md). PIA stays on the Compose bridge (not host network).
+
+services:
+  pia-web:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PIA_WEB_HOST: "0.0.0.0"
+      PIA_WEB_PORT: "8765"
+      LOG_TO_CONSOLE: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+
+  pia-run:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PIA_WEB_HOST: "0.0.0.0"
+      PIA_WEB_PORT: "8765"
+      LOG_TO_CONSOLE: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+
+  pia-bot:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PIA_WEB_HOST: "0.0.0.0"
+      PIA_WEB_PORT: "8765"
+      LOG_TO_CONSOLE: "true"
+      PIA_MONITOR_SCHEDULER: "false"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434

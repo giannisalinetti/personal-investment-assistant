@@ -14,9 +14,10 @@
 # Telegram bot is started by default (needs TELEGRAM_* in .env).
 # pia-run runs once on `up` (manual Monitor); scheduled Monitor stays in pia-web.
 #
-# Host Ollama: PIA_LLM_PROVIDER=ollama and
-#   OLLAMA_BASE_URL=http://host.containers.internal:11434  (Podman)
-#   or http://host.docker.internal:11434                   (Docker)
+# Host Ollama (default Compose path):
+#   Linux Podman:  docker/compose.podman.yml (pasta → 127.0.0.1:11434; Ollama stays on loopback)
+#   Docker:        docker/compose.docker.yml (host.docker.internal; Linux Engine needs OLLAMA_HOST=0.0.0.0)
+#   Mac Desktop:   host.containers.internal / host.docker.internal (no pasta; Metal host Ollama)
 
 name: pia
 

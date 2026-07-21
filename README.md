@@ -78,18 +78,18 @@ OLLAMA_MODEL=qwen3:8b
 ```bash
 cd /path/to/personal-investment-assistant
 cp .env.example .env
-# Edit .env: set OLLAMA_MODEL (see above) and the host URL:
-#   Podman:         OLLAMA_BASE_URL=http://host.containers.internal:11434
-#   Docker Desktop: OLLAMA_BASE_URL=http://host.docker.internal:11434
+# Edit .env: set OLLAMA_MODEL (see above). Prefer ./docker/up.sh so networking is set for you:
+#   Linux Podman — pasta → host 127.0.0.1 (no OLLAMA_HOST change)
+#   Docker Desktop Mac — host.docker.internal (Metal)
+#   Docker Engine Linux — host.docker.internal + OLLAMA_HOST=0.0.0.0:11434 on the host
 
 ./docker/up.sh
 # same as: make up
-# or: podman-compose -f docker/compose.yml up -d
 ```
 
 Dashboard: http://127.0.0.1:8765
 
-If Advisor fails with a model / connection error, check `ollama list` and that `OLLAMA_BASE_URL` reaches the host daemon from the container (not `http://localhost:11434` inside Compose).
+If Advisor fails with a connection error, see [docs/compose.md](docs/compose.md) troubleshooting (runtime-specific Ollama listen / URL rules). Never use `http://localhost:11434` *inside* a container.
 
 Default Monitor schedule is in-process APScheduler inside `pia-web` (08:00 / 13:00 / 17:30). Set `PIA_MONITOR_SCHEDULER=false` if you use K8s CronJobs or Compose Ofelia instead.
 
@@ -173,9 +173,14 @@ OPENAI_MODEL=Qwen/Qwen3-8B            # or VLLM_MODEL=
 OPENAI_API_KEY=not-needed
 ```
 
-Inside Compose/Podman containers pointing at **host** Ollama, use:
+Inside Compose containers pointing at **host** Ollama, prefer `./docker/up.sh` (it applies `compose.podman.yml` or `compose.docker.yml`). Manual examples:
 
 ```bash
+# Linux Podman + compose.podman.yml
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+# Docker (Desktop or Engine)
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+# Podman Desktop Mac (no pasta override)
 OLLAMA_BASE_URL=http://host.containers.internal:11434
 ```
 

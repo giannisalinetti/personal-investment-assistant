@@ -49,6 +49,8 @@ podman build -t localhost/pia-llm-stub:local -f docker/llm-stub/Dockerfile docke
 | File | Role |
 |------|------|
 | [`docker/compose.yml`](../docker/compose.yml) | Base stack: `pia-web`, `pia-bot`, one-shot `pia-run`; optional `llm-stub` / `vllm` / `ofelia` |
+| [`docker/compose.podman.yml`](../docker/compose.podman.yml) | Linux Podman host-Ollama: pasta `-T,11434` (loopback map) |
+| [`docker/compose.docker.yml`](../docker/compose.docker.yml) | Docker: `host.docker.internal` via `host-gateway` |
 | [`docker/compose.stub.yml`](../docker/compose.stub.yml) | Force PIA → stub via DNS alias `vllm` (adds `depends_on: llm-stub`) |
 | [`docker/compose.gpu.yml`](../docker/compose.gpu.yml) | Force PIA → real vLLM service (adds `depends_on: vllm`) |
 | [`docker/compose.schedule.yml`](../docker/compose.schedule.yml) | Turn **off** in-process scheduler when using Ofelia |
@@ -69,24 +71,40 @@ Project name is `pia` (named volumes like `pia_pia-data`).
 
 ### Host Ollama (default — Mac / Linux)
 
-Ollama stays on the **host**. Containers must not use `localhost:11434` (that is the container itself).
+Ollama stays on the **host**. Prefer `./docker/up.sh` / `make up` so the right networking override is applied automatically.
 
-In `.env`:
+| Runtime | Ollama listen | What Compose does |
+|---------|---------------|-------------------|
+| **Linux Podman** | Default `127.0.0.1` (no change) | `compose.podman.yml` — pasta maps container `127.0.0.1:11434` → host loopback |
+| **Docker Desktop (Mac)** | Default (Metal) | `compose.docker.yml` — `host.docker.internal` (no `OLLAMA_HOST` change) |
+| **Docker Engine (Linux)** | Must use `0.0.0.0:11434` | `compose.docker.yml` — `host.docker.internal` via `host-gateway` |
+| **Podman Desktop (Mac)** | Default (Metal) | Base compose + `host.containers.internal` in `.env` (no pasta) |
+
+In `.env` (model and provider; URL is often set by the override):
 
 ```bash
 PIA_LLM_PROVIDER=ollama
 OLLAMA_MODEL=qwen3:8b
-# Podman:
-OLLAMA_BASE_URL=http://host.containers.internal:11434
-# Docker Desktop:
-# OLLAMA_BASE_URL=http://host.docker.internal:11434
+# Optional if not using up.sh overrides:
+# Linux Podman (with compose.podman.yml): OLLAMA_BASE_URL=http://127.0.0.1:11434
+# Docker: OLLAMA_BASE_URL=http://host.docker.internal:11434
+# Podman Desktop Mac: OLLAMA_BASE_URL=http://host.containers.internal:11434
 PIA_MONITOR_SCHEDULER=true
 ```
+
+**Docker Engine on Linux only** — Ollama must accept connections from the bridge gateway:
+
+```bash
+export OLLAMA_HOST=0.0.0.0:11434
+# restart the ollama service, then:
+./docker/up.sh
+```
+
+`0.0.0.0` listens on all interfaces. On a home LAN, restrict with a firewall if you do not want Ollama reachable from other machines. This is **not** required for Linux Podman or Mac Desktop.
 
 ```bash
 ./docker/up.sh
 # same as: make up
-# or: podman-compose -f docker/compose.yml up -d
 ```
 
 Dashboard: http://127.0.0.1:8765
@@ -96,12 +114,12 @@ flowchart LR
   subgraph host [Host]
     ollama[Ollama_11434]
   end
-  subgraph composeNet [Compose_network]
+  subgraph composeNet [Compose]
     web[pia-web]
     bot[pia-bot]
   end
-  web -->|"OLLAMA_BASE_URL"| ollama
-  bot -->|"OLLAMA_BASE_URL"| ollama
+  web -->|"host_Ollama_URL"| ollama
+  bot -->|"host_Ollama_URL"| ollama
 ```
 
 ### Stub smoke (no GPU, no Ollama)
@@ -202,8 +220,11 @@ Containers set `PIA_WEB_HOST=0.0.0.0` and publish **8765**. If the port is reach
 
 | Symptom | Likely cause |
 |---------|----------------|
-| Advisor “Connection error” / “Check Ollama” | `OLLAMA_BASE_URL=http://localhost:11434` **inside** a container, or leftover `PIA_LLM_PROVIDER=vllm` pointing at a dead stub |
-| Stub works but Ollama does not | Wrong host gateway (`host.containers.internal` vs `host.docker.internal`) |
+| Advisor “Connection refused” / “Check Ollama” (Linux Podman) | Not using `./docker/up.sh` (missing `compose.podman.yml`), or Ollama not running on host `127.0.0.1:11434` |
+| Advisor “Connection refused” (Docker Engine Linux) | Ollama still on `127.0.0.1` only — set `OLLAMA_HOST=0.0.0.0:11434` and restart Ollama; use `make up` for `compose.docker.yml` |
+| Advisor “Connection refused” (Mac Desktop) | Wrong URL — use `host.docker.internal` (Docker) or `host.containers.internal` (Podman); never `localhost` inside the container |
+| `OLLAMA_BASE_URL=http://localhost:11434` inside a container | That is the container loopback, not the host — use `make up` overrides or the table above |
+| Stub works but Ollama does not | Wrong host gateway or leftover `PIA_LLM_PROVIDER=vllm` |
 | Double Monitor runs | Ofelia **and** `PIA_MONITOR_SCHEDULER=true` |
 | Empty dashboard | No successful Monitor yet — Refresh Monitor or `compose run … pia-run` |
 | Image pull `pia:local` denied | Use `localhost/pia:local` (Podman short-name resolution) |

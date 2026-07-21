@@ -20,10 +20,10 @@ Stub / GPU / cloud profiles are optional overrides — see [docs/compose.md](../
 ```bash
 cd /path/to/personal-investment-assistant
 cp .env.example .env
-# Podman:
-#   OLLAMA_BASE_URL=http://host.containers.internal:11434
-# Docker Desktop:
-#   OLLAMA_BASE_URL=http://host.docker.internal:11434
+# Set OLLAMA_MODEL / secrets. Prefer ./docker/up.sh so networking overrides apply:
+#   Linux Podman  — pasta → host 127.0.0.1:11434 (no OLLAMA_HOST change)
+#   Docker Desktop Mac — host.docker.internal (Metal; no OLLAMA_HOST change)
+#   Docker Engine Linux — host.docker.internal + export OLLAMA_HOST=0.0.0.0:11434
 
 ./docker/up.sh
 # same as: make up
@@ -31,7 +31,7 @@ cp .env.example .env
 
 Dashboard: http://127.0.0.1:8765
 
-`./docker/up.sh` (and the root `Makefile`) pick Podman or Docker and a Compose provider automatically.
+`./docker/up.sh` (and the root `Makefile`) pick Podman or Docker, a Compose provider, and the right networking override (`compose.podman.yml` or `compose.docker.yml`).
 
 | Command | Equivalent |
 |---------|------------|
